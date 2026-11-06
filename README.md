@@ -1,4 +1,4 @@
-# 4WayChaos — Project 3: Deliverable 3 (First Working Slice)
+# 4WayChaos
 
 **Group 95:** Ethan Gearhart, Xinchen, Makayla, Timothy Bungato  
 **Course:** CS 2114  
