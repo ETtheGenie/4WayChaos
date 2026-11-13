@@ -1,5 +1,5 @@
 package defaultPackage;
-public class SinglyLinkedQueueTest
+public class LinkedQueue
 {
     //~ Fields ................................................................
 
