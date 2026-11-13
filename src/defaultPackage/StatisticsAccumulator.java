@@ -1,5 +1,5 @@
 package defaultPackage;
-public class SimulationMetrics
+public class StatisticsAccumulator
 {
     //~ Fields ................................................................
 

@@ -1,5 +1,5 @@
 package defaultPackage;
-public class IntersectionModel
+public class Lane
 {
     //~ Fields ................................................................
 
