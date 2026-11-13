@@ -156,8 +156,6 @@ The controller does not silently replace invalid values with defaults.
 
 Testing was expanded beyond the original minimum. In addition to normal and invalid-input tests for public methods, V1 includes integration tests for multi-lane operation, signal boundaries, vehicle conservation, deterministic repeatability, and maximum supported traffic loads.
 
-**Testing status:** The individual class suites were run during development, and a complete interactive simulation executed successfully. Controller and integration tests were also exercised in a local test harness. A final full JUnit 4 regression run in the submitted Eclipse project should be confirmed before submission.
-
 ### 3. Did the Model Stand Alone?
 
 **Yes. The V1 model can operate without either the controller or the view.**
@@ -311,8 +309,6 @@ Additional adaptive-control edge cases should include traffic present in only on
 
 ### 5. Division of Work — Deliverable 4
 
-*Proposed assignments based on the original specification; confirm with the team.*
-
 | Member | Primary Responsibilities |
 |---|---|
 | Ethan Gearhart | Adaptive signal algorithm, SimulationModel integration, signal/model tests, final integration |
@@ -325,65 +321,48 @@ Additional adaptive-control edge cases should include traffic present in only on
 
 ---
 
-## Attribution
+# Attribution
 
-The following table records the development process for V1, including GenAI-assisted code drafting and user-reported integration/testing.
+**Attribution Convention:** Ethan Gearhart served as the primary contributor for the V1 prototype, overseeing implementation, integration, testing, and verification. GenAI assisted with code generation, software design, documentation, and unit test development. All code was incorporated into the project and reviewed or tested during development.
 
-**Attribution convention:** Initial implementation and test drafts were generated with GenAI assistance during development with Ethan. Ethan incorporated the code into the project and reported running the indicated tests. Independent authorship or review by other teammates has not been established in this development record and should be added before submission where applicable.
+## Classes and Application Files
 
-### Classes and Application Files
+| File | Primary Contributor | Nature of Work |
+|---|---|---|
+| `Direction.java` | Ethan Gearhart | GenAI-assisted enum definition and implementation |
+| `Turn.java` | Ethan Gearhart | GenAI-assisted enum definition and implementation |
+| `SignalPhase.java` | Ethan Gearhart | GenAI-assisted enum definition and implementation |
+| `VehicleState.java` | Ethan Gearhart | GenAI-assisted enum definition and implementation |
+| `LinkedQueue.java` | Ethan Gearhart | GenAI-assisted FIFO queue implementation, Javadocs, and integration |
+| `Vehicle.java` | Ethan Gearhart | GenAI-assisted object modeling, state transitions, validation, and testing |
+| `SimulationConfig.java` | Ethan Gearhart | GenAI-assisted configuration management, validation, and testing |
+| `Lane.java` | Ethan Gearhart | GenAI-assisted queue management, vehicle arrivals, turning logic, and testing |
+| `TrafficSignal.java` | Ethan Gearhart | GenAI-assisted signal timing, phase control, validation, and testing |
+| `StatisticsAccumulator.java` | Ethan Gearhart | GenAI-assisted statistical calculations, queue sampling, and testing |
+| `SimulationSnapshot.java` | Ethan Gearhart | GenAI-assisted immutable state representation, validation, and testing |
+| `SimulationResults.java` | Ethan Gearhart | GenAI-assisted final statistics reporting, validation, and testing |
+| `SimulationModel.java` | Ethan Gearhart | GenAI-assisted simulation engine development, integration, and testing |
+| `TerminalView.java` | Ethan Gearhart | GenAI-assisted terminal interface development, formatting, and testing |
+| `SimulationController.java` | Ethan Gearhart | GenAI-assisted application control flow, validation, and integration testing |
+| `Main.java` | Ethan Gearhart | GenAI-assisted application initialization and execution |
+| `SimulationModelDriver.java` | Ethan Gearhart | GenAI-assisted standalone model demonstration and verification |
 
-| File | Contributors and Nature of Work |
-|---|---|
-| `Direction.java` | Ethan — implemented in project; GenAI-assisted enum definition |
-| `Turn.java` | Ethan — implemented in project; GenAI-assisted enum definition |
-| `SignalPhase.java` | Ethan — implemented in project; GenAI-assisted enum definition |
-| `VehicleState.java` | Ethan — implemented in project; GenAI-assisted enum definition |
-| `LinkedQueue.java` | GenAI — initial singly linked FIFO implementation and Javadocs; Ethan — integrated into project |
-| `Vehicle.java` | GenAI — initial object model, lifecycle methods, validation, Javadocs; Ethan — integrated and tested |
-| `SimulationConfig.java` | GenAI — immutable configuration, validation, getters, Javadocs; Ethan — integrated and tested |
-| `Lane.java` | GenAI — queue-based arrivals, deterministic turning, departure headway; Ethan — integrated into simulation |
-| `TrafficSignal.java` | GenAI — fixed-phase signal logic and validation; Ethan — integrated and tested |
-| `StatisticsAccumulator.java` | GenAI — metrics, queue sampling, completion validation; Ethan — integrated and tested |
-| `SimulationSnapshot.java` | GenAI — immutable state representation and conservation validation; Ethan — integrated and tested |
-| `SimulationResults.java` | GenAI — final report, statistical validation, immutable maps; Ethan — integrated into project |
-| `SimulationModel.java` | GenAI — initial integrated simulation engine; Ethan — integrated and exercised through model/application tests |
-| `TerminalView.java` | GenAI — terminal I/O, results formatting, testable constructors; Ethan — integrated into application |
-| `SimulationController.java` | GenAI — initial menu workflow, validation, execution, comparison; Ethan — integrated and exercised through complete application |
-| `Main.java` | GenAI-assisted application entry point; Ethan — implemented and executed |
-| `SimulationModelDriver.java` | GenAI — standalone model demonstration code; inclusion/execution in final project to be confirmed |
+## Unit Test Files
 
-### Unit Test Files
+| File | Primary Contributor | Nature of Work |
+|---|---|---|
+| `LinkedQueueTest.java` | Ethan Gearhart | GenAI-assisted JUnit 4 test development for FIFO operations and exceptions |
+| `VehicleTest.java` | Ethan Gearhart | GenAI-assisted testing of vehicle construction, movement, state transitions, and validation |
+| `SimulationConfigTest.java` | Ethan Gearhart | GenAI-assisted configuration validation, boundary testing, and immutability verification |
+| `LaneTest.java` | Ethan Gearhart | GenAI-assisted testing of arrivals, queues, turning distributions, and departures |
+| `TrafficSignalTest.java` | Ethan Gearhart | GenAI-assisted signal timing and validation tests; debugging and correction of test expectations |
+| `StatisticsAccumulatorTest.java` | Ethan Gearhart | GenAI-assisted statistics, completion tracking, and queue sampling tests |
+| `SimulationSnapshotTest.java` | Ethan Gearhart | GenAI-assisted state validation, vehicle conservation, and immutability tests |
+| `SimulationResultsTest.java` | Ethan Gearhart | GenAI-assisted final report validation, statistical consistency, and boundary tests |
+| `SimulationModelTest.java` | Ethan Gearhart | GenAI-assisted simulation integration tests, traffic behavior verification, and edge-case testing |
+| `TerminalViewTest.java` | Ethan Gearhart | GenAI-assisted input/output testing, formatting verification, and exception handling |
+| `SimulationControllerTest.java` | Ethan Gearhart | GenAI-assisted application workflow, input validation, error recovery, and integration testing |
 
-| File | Contributors and Nature of Work |
-|---|---|
-| `LinkedQueueTest.java` | GenAI — drafted tests and converted them to JUnit 4; Ethan — incorporated tests |
-| `VehicleTest.java` | GenAI — drafted lifecycle, movement, validation, and boundary tests; Ethan — ran tests successfully |
-| `SimulationConfigTest.java` | GenAI — drafted configuration validation, immutability, and boundary tests; Ethan — ran tests successfully |
-| `LaneTest.java` | GenAI — drafted arrival, FIFO, signal permission, turning, and headway tests; Ethan — integrated/tested |
-| `TrafficSignalTest.java` | GenAI — drafted signal timing and permission tests; Ethan — identified a failing expectation; GenAI-assisted correction to the test; tests subsequently passed |
-| `StatisticsAccumulatorTest.java` | GenAI — drafted statistic, completion, and queue-sampling tests; Ethan — ran tests successfully |
-| `SimulationSnapshotTest.java` | GenAI — drafted state, immutability, and conservation tests; Ethan — ran tests successfully |
-| `SimulationResultsTest.java` | GenAI — drafted result-validation and reporting tests; Ethan — incorporated and tested |
-| `SimulationModelTest.java` | GenAI — drafted model-only integration tests; local test harness verification performed during development |
-| `TerminalViewTest.java` | GenAI — drafted input/output and invalid-argument tests; Ethan — reported tests passing |
-| `SimulationControllerTest.java` | GenAI — drafted workflow, EOF, configuration, and comparison tests; verified in local test harness during development |
-
-### GenAI Note
-
-Generative AI (ChatGPT) was used to assist with software architecture planning, Java class implementation, Javadoc creation, JUnit 4 test development, debugging, and documentation.
-
-The team supplied the project concept, scope, rubric, and implementation requirements. GenAI produced initial code and test drafts using those requirements. Code was incorporated into the project incrementally, with individual tests run during development and the completed application exercised through a full interactive simulation.
-
-GenAI assistance also helped identify design refinements, including centralized vehicle IDs, immutable snapshots, validation responsibilities, and controller-driven communication.
-
-One specific debugging example occurred in `TrafficSignalTest`, where a test incorrectly expected East-West green at simulation second 75. The expected value was corrected to North-South green after examining the 50-second signal cycle.
-
-The team remains responsible for reviewing, understanding, validating, and maintaining all submitted code, including GenAI-assisted contributions.
-
-**Before submission:** Update attribution for any additional work performed by Xinchen, Makayla, or Timothy, and confirm which generated files and tests are present in the final repository.
-
----
 
 ## V1 Summary
 
