@@ -363,6 +363,13 @@ Additional adaptive-control edge cases should include traffic present in only on
 | `TerminalViewTest.java` | Ethan | GenAI-assisted input/output testing, formatting verification, and exception handling |
 | `SimulationControllerTest.java` | Timothy | GenAI-assisted application workflow, input validation, error recovery, and integration testing |
 
+## GenAI Note
+
+Generative AI (ChatGPT) was used to assist with software architecture planning, Java class implementation, Javadoc creation, JUnit 4 test development, debugging, and documentation.
+
+The team supplied the project concept, scope, rubric, and implementation requirements. GenAI produced initial code and test drafts using those requirements. Code was incorporated into the project incrementally, with individual tests run during development and the completed application exercised through a full interactive simulation.
+
+GenAI assistance also helped identify design refinements, including centralized vehicle IDs, immutable snapshots, validation responsibilities, and controller-driven communication.
 
 ## V1 Summary
 
