@@ -329,39 +329,39 @@ Additional adaptive-control edge cases should include traffic present in only on
 
 | File | Primary Contributor | Nature of Work |
 |---|---|---|
-| `Direction.java` | Ethan Gearhart | GenAI-assisted enum definition and implementation |
-| `Turn.java` | Ethan Gearhart | GenAI-assisted enum definition and implementation |
-| `SignalPhase.java` | Ethan Gearhart | GenAI-assisted enum definition and implementation |
-| `VehicleState.java` | Ethan Gearhart | GenAI-assisted enum definition and implementation |
-| `LinkedQueue.java` | Ethan Gearhart | GenAI-assisted FIFO queue implementation, Javadocs, and integration |
-| `Vehicle.java` | Ethan Gearhart | GenAI-assisted object modeling, state transitions, validation, and testing |
-| `SimulationConfig.java` | Ethan Gearhart | GenAI-assisted configuration management, validation, and testing |
-| `Lane.java` | Ethan Gearhart | GenAI-assisted queue management, vehicle arrivals, turning logic, and testing |
-| `TrafficSignal.java` | Ethan Gearhart | GenAI-assisted signal timing, phase control, validation, and testing |
-| `StatisticsAccumulator.java` | Ethan Gearhart | GenAI-assisted statistical calculations, queue sampling, and testing |
-| `SimulationSnapshot.java` | Ethan Gearhart | GenAI-assisted immutable state representation, validation, and testing |
-| `SimulationResults.java` | Ethan Gearhart | GenAI-assisted final statistics reporting, validation, and testing |
-| `SimulationModel.java` | Ethan Gearhart | GenAI-assisted simulation engine development, integration, and testing |
-| `TerminalView.java` | Ethan Gearhart | GenAI-assisted terminal interface development, formatting, and testing |
-| `SimulationController.java` | Ethan Gearhart | GenAI-assisted application control flow, validation, and integration testing |
-| `Main.java` | Ethan Gearhart | GenAI-assisted application initialization and execution |
-| `SimulationModelDriver.java` | Ethan Gearhart | GenAI-assisted standalone model demonstration and verification |
+| `Direction.java` | Timothy | GenAI-assisted enum definition and implementation |
+| `Turn.java` | Ethan | GenAI-assisted enum definition and implementation |
+| `SignalPhase.java` | Ethan | GenAI-assisted enum definition and implementation |
+| `VehicleState.java` | Xinchen | GenAI-assisted enum definition and implementation |
+| `LinkedQueue.java` | Ethan | GenAI-assisted FIFO queue implementation, Javadocs, and integration |
+| `Vehicle.java` | Makayla | GenAI-assisted object modeling, state transitions, validation, and testing |
+| `SimulationConfig.java` | Makayla | GenAI-assisted configuration management, validation, and testing |
+| `Lane.java` | Ethan | GenAI-assisted queue management, vehicle arrivals, turning logic, and testing |
+| `TrafficSignal.java` | Timothy | GenAI-assisted signal timing, phase control, validation, and testing |
+| `StatisticsAccumulator.java` | Xinchen | GenAI-assisted statistical calculations, queue sampling, and testing |
+| `SimulationSnapshot.java` | Ethan | GenAI-assisted immutable state representation, validation, and testing |
+| `SimulationResults.java` | Timothy | GenAI-assisted final statistics reporting, validation, and testing |
+| `SimulationModel.java` | Xinchen | GenAI-assisted simulation engine development, integration, and testing |
+| `TerminalView.java` | Ethan | GenAI-assisted terminal interface development, formatting, and testing |
+| `SimulationController.java` | Timothy | GenAI-assisted application control flow, validation, and integration testing |
+| `Main.java` | Ethan | GenAI-assisted application initialization and execution |
+| `SimulationModelDriver.java` | Xinchen | GenAI-assisted standalone model demonstration and verification |
 
 ## Unit Test Files
 
 | File | Primary Contributor | Nature of Work |
 |---|---|---|
-| `LinkedQueueTest.java` | Ethan Gearhart | GenAI-assisted JUnit 4 test development for FIFO operations and exceptions |
-| `VehicleTest.java` | Ethan Gearhart | GenAI-assisted testing of vehicle construction, movement, state transitions, and validation |
-| `SimulationConfigTest.java` | Ethan Gearhart | GenAI-assisted configuration validation, boundary testing, and immutability verification |
-| `LaneTest.java` | Ethan Gearhart | GenAI-assisted testing of arrivals, queues, turning distributions, and departures |
-| `TrafficSignalTest.java` | Ethan Gearhart | GenAI-assisted signal timing and validation tests; debugging and correction of test expectations |
-| `StatisticsAccumulatorTest.java` | Ethan Gearhart | GenAI-assisted statistics, completion tracking, and queue sampling tests |
-| `SimulationSnapshotTest.java` | Ethan Gearhart | GenAI-assisted state validation, vehicle conservation, and immutability tests |
-| `SimulationResultsTest.java` | Ethan Gearhart | GenAI-assisted final report validation, statistical consistency, and boundary tests |
-| `SimulationModelTest.java` | Ethan Gearhart | GenAI-assisted simulation integration tests, traffic behavior verification, and edge-case testing |
-| `TerminalViewTest.java` | Ethan Gearhart | GenAI-assisted input/output testing, formatting verification, and exception handling |
-| `SimulationControllerTest.java` | Ethan Gearhart | GenAI-assisted application workflow, input validation, error recovery, and integration testing |
+| `LinkedQueueTest.java` | Xinchen | GenAI-assisted JUnit 4 test development for FIFO operations and exceptions |
+| `VehicleTest.java` | Ethan | GenAI-assisted testing of vehicle construction, movement, state transitions, and validation |
+| `SimulationConfigTest.java` | Timothy | GenAI-assisted configuration validation, boundary testing, and immutability verification |
+| `LaneTest.java` | Ethan | GenAI-assisted testing of arrivals, queues, turning distributions, and departures |
+| `TrafficSignalTest.java` | Xinchen | GenAI-assisted signal timing and validation tests; debugging and correction of test expectations |
+| `StatisticsAccumulatorTest.java` | Timothy | GenAI-assisted statistics, completion tracking, and queue sampling tests |
+| `SimulationSnapshotTest.java` | Xinchen | GenAI-assisted state validation, vehicle conservation, and immutability tests |
+| `SimulationResultsTest.java` | Ethan | GenAI-assisted final report validation, statistical consistency, and boundary tests |
+| `SimulationModelTest.java` | Xinchen | GenAI-assisted simulation integration tests, traffic behavior verification, and edge-case testing |
+| `TerminalViewTest.java` | Ethan | GenAI-assisted input/output testing, formatting verification, and exception handling |
+| `SimulationControllerTest.java` | Timothy | GenAI-assisted application workflow, input validation, error recovery, and integration testing |
 
 
 ## V1 Summary
