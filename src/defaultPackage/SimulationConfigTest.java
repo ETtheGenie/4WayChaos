@@ -1,56 +1,67 @@
-package defaultPackage;
 
-import static org.junit.Assert.*;
-import org.junit.Before;
-import org.junit.Test;
+package defaultPackage;
 
 import static org.junit.Assert.*;
 
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.Map;
 import org.junit.Test;
 
 /**
- * JUnit 4 tests for SimulationConfig. Verifies configuration initialization,
- * parameter validation, boundary conditions, and immutability.
+ * JUnit 4 tests for V2 SimulationConfig validation, getters, immutable
+ * configuration state, and integration with SimulationOptions.
  */
 public class SimulationConfigTest
 {
 
     /**
-     * Creates a valid set of arrival rates for testing.
+     * Creates a complete valid set of arrival rates.
      *
-     * @return map containing all four directions
+     * @return a mutable map with all four directions
      */
-    private Map<Direction, Integer> createValidRates()
+    private Map<Direction, Integer> makeRates()
     {
         Map<Direction, Integer> rates = new EnumMap<>(Direction.class);
-
         rates.put(Direction.NORTH, 600);
-        rates.put(Direction.SOUTH, 400);
-        rates.put(Direction.EAST, 800);
-        rates.put(Direction.WEST, 500);
-
+        rates.put(Direction.SOUTH, 450);
+        rates.put(Direction.EAST, 300);
+        rates.put(Direction.WEST, 150);
         return rates;
     }
 
 
     /**
-     * Creates a valid default simulation configuration.
+     * Creates a configuration from supplied values for concise test setup.
      *
-     * @return valid SimulationConfig instance
+     * @param rates
+     *            arrival-rate map
+     * @param duration
+     *            simulation duration
+     * @param left
+     *            left-turn percentage
+     * @param uTurn
+     *            U-turn percentage
+     * @param options
+     *            V2 options
+     * @return validated configuration
      */
-    private SimulationConfig createValidConfig()
+    private SimulationConfig makeConfig(
+        Map<Direction, Integer> rates,
+        int duration,
+        int left,
+        int uTurn,
+        SimulationOptions options)
     {
-        return new SimulationConfig(createValidRates(), 30, 45, 600, 20, 10);
+        return new SimulationConfig(rates, duration, left, uTurn, options);
     }
 
 
     /**
-     * Verifies that an operation throws IllegalArgumentException.
+     * Confirms that an invalid operation rejects its argument.
      *
      * @param operation
-     *            operation expected to fail
+     *            operation expected to throw IllegalArgumentException
      */
     private void assertInvalid(Runnable operation)
     {
@@ -59,280 +70,313 @@ public class SimulationConfigTest
             operation.run();
             fail("Expected IllegalArgumentException");
         }
-        catch (IllegalArgumentException e)
+        catch (IllegalArgumentException expected)
         {
-            // Expected exception.
+            // Invalid configuration was correctly rejected.
         }
     }
 
 
     /**
-     * Tests correct initialization and retrieval of all configuration
-     * parameters.
+     * Checks construction and all public getters for a normal configuration.
      */
     @Test
-    public void testConstructorAndGetters()
+    public void testValidConfigurationAndGetters()
     {
-        SimulationConfig config = createValidConfig();
+        SimulationOptions options = SimulationOptions.builder()
+            .minGreenSeconds(15).randomSeed(99L).build();
+        SimulationConfig config = makeConfig(makeRates(), 120, 20, 10, options);
 
         assertEquals(600, config.getArrivalRatePerHour(Direction.NORTH));
-        assertEquals(400, config.getArrivalRatePerHour(Direction.SOUTH));
-        assertEquals(800, config.getArrivalRatePerHour(Direction.EAST));
-        assertEquals(500, config.getArrivalRatePerHour(Direction.WEST));
-
-        assertEquals(30, config.getNsGreenSeconds());
-        assertEquals(45, config.getEwGreenSeconds());
-        assertEquals(600, config.getDurationSeconds());
+        assertEquals(450, config.getArrivalRatePerHour(Direction.SOUTH));
+        assertEquals(300, config.getArrivalRatePerHour(Direction.EAST));
+        assertEquals(150, config.getArrivalRatePerHour(Direction.WEST));
+        assertEquals(4, config.getArrivalRatesPerHour().size());
+        assertEquals(120, config.getDurationSeconds());
         assertEquals(20, config.getLeftTurnPercent());
         assertEquals(10, config.getUTurnPercent());
+        assertSame(options, config.getOptions());
+        assertEquals(15, config.getOptions().getMinGreenSeconds());
+        assertEquals(99L, config.getOptions().getRandomSeed());
     }
 
 
     /**
-     * Tests that the arrival-rate map getter returns all four configured
-     * directions and their values.
+     * Checks the documented static configuration limits.
      */
     @Test
-    public void testArrivalRatesMapGetter()
+    public void testConfigurationConstants()
     {
-        SimulationConfig config = createValidConfig();
-
-        Map<Direction, Integer> rates = config.getArrivalRatesPerHour();
-
-        assertEquals(4, rates.size());
-
-        assertEquals(Integer.valueOf(600), rates.get(Direction.NORTH));
-
-        assertEquals(Integer.valueOf(400), rates.get(Direction.SOUTH));
+        assertEquals(0, SimulationConfig.MIN_ARRIVAL_RATE);
+        assertEquals(1800, SimulationConfig.MAX_ARRIVAL_RATE);
+        assertEquals(60, SimulationConfig.MIN_DURATION_SECONDS);
+        assertEquals(7200, SimulationConfig.MAX_DURATION_SECONDS);
+        assertEquals(0, SimulationConfig.MIN_TURN_PERCENT);
+        assertEquals(100, SimulationConfig.MAX_TURN_PERCENT);
     }
 
 
     /**
-     * Tests that zero arrival rates are permitted for approaches without
-     * incoming traffic.
+     * Tests minimum and maximum allowed arrival rates across all approaches.
      */
     @Test
-    public void testZeroArrivalRates()
+    public void testArrivalRateBoundaries()
     {
-        Map<Direction, Integer> rates = createValidRates();
-
-        for (Direction direction : Direction.values())
-        {
-            rates.put(direction, 0);
-        }
-
-        SimulationConfig config = new SimulationConfig(rates, 30, 30, 60, 0, 0);
-
-        for (Direction direction : Direction.values())
-        {
-            assertEquals(0, config.getArrivalRatePerHour(direction));
-        }
-    }
-
-
-    /**
-     * Tests acceptance of minimum and maximum valid configuration values.
-     */
-    @Test
-    public void testValidBoundaries()
-    {
-        Map<Direction, Integer> rates = createValidRates();
-
+        Map<Direction, Integer> rates = makeRates();
         rates.put(Direction.NORTH, 0);
         rates.put(Direction.SOUTH, 1800);
-
-        SimulationConfig minConfig =
-            new SimulationConfig(rates, 5, 5, 60, 0, 0);
-
-        assertEquals(5, minConfig.getNsGreenSeconds());
-        assertEquals(60, minConfig.getDurationSeconds());
-        assertEquals(0, minConfig.getLeftTurnPercent());
-
-        SimulationConfig maxConfig =
-            new SimulationConfig(rates, 120, 120, 7200, 100, 0);
-
-        assertEquals(120, maxConfig.getNsGreenSeconds());
-        assertEquals(7200, maxConfig.getDurationSeconds());
-        assertEquals(100, maxConfig.getLeftTurnPercent());
-        assertEquals(1800, maxConfig.getArrivalRatePerHour(Direction.SOUTH));
-    }
-
-
-    /**
-     * Tests rejection of a null arrival-rate map.
-     */
-    @Test
-    public void testNullArrivalRates()
-    {
-        assertInvalid(() -> new SimulationConfig(null, 30, 30, 600, 20, 10));
-    }
-
-
-    /**
-     * Tests rejection of missing directions and null arrival-rate values.
-     */
-    @Test
-    public void testIncompleteArrivalRates()
-    {
-        Map<Direction, Integer> missing = createValidRates();
-        missing.remove(Direction.WEST);
-
-        assertInvalid(() -> new SimulationConfig(missing, 30, 30, 600, 20, 10));
-
-        Map<Direction, Integer> nullRate = createValidRates();
-        nullRate.put(Direction.NORTH, null);
-
-        assertInvalid(
-            () -> new SimulationConfig(nullRate, 30, 30, 600, 20, 10));
-    }
-
-
-    /**
-     * Tests rejection of negative and excessively large vehicle arrival rates.
-     */
-    @Test
-    public void testInvalidArrivalRates()
-    {
-        Map<Direction, Integer> rates = createValidRates();
-
-        rates.put(Direction.NORTH, -1);
-
-        assertInvalid(() -> new SimulationConfig(rates, 30, 30, 600, 20, 10));
-
-        rates.put(Direction.NORTH, 1000000);
-
-        assertInvalid(() -> new SimulationConfig(rates, 30, 30, 600, 20, 10));
-
-        rates.put(Direction.NORTH, 1801);
-
-        assertInvalid(() -> new SimulationConfig(rates, 30, 30, 600, 20, 10));
-    }
-
-
-    /**
-     * Tests that signal phases outside the permitted duration limits are
-     * rejected.
-     */
-    @Test
-    public void testInvalidGreenDurations()
-    {
-        Map<Direction, Integer> rates = createValidRates();
-
-        assertInvalid(() -> new SimulationConfig(rates, 0, 30, 600, 20, 10));
-
-        assertInvalid(() -> new SimulationConfig(rates, 4, 30, 600, 20, 10));
-
-        assertInvalid(() -> new SimulationConfig(rates, 30, 121, 600, 20, 10));
-    }
-
-
-    /**
-     * Tests rejection of simulation durations below the minimum or above the
-     * maximum.
-     */
-    @Test
-    public void testInvalidSimulationDuration()
-    {
-        Map<Direction, Integer> rates = createValidRates();
-
-        assertInvalid(() -> new SimulationConfig(rates, 30, 30, 0, 20, 10));
-
-        assertInvalid(() -> new SimulationConfig(rates, 30, 30, 59, 20, 10));
-
-        assertInvalid(() -> new SimulationConfig(rates, 30, 30, 7201, 20, 10));
-    }
-
-
-    /**
-     * Tests rejection of negative or excessive individual turning percentages.
-     */
-    @Test
-    public void testInvalidTurnPercentages()
-    {
-        Map<Direction, Integer> rates = createValidRates();
-
-        assertInvalid(() -> new SimulationConfig(rates, 30, 30, 600, -1, 10));
-
-        assertInvalid(() -> new SimulationConfig(rates, 30, 30, 600, 20, -1));
-
-        assertInvalid(() -> new SimulationConfig(rates, 30, 30, 600, 101, 0));
-
-        assertInvalid(() -> new SimulationConfig(rates, 30, 30, 600, 0, 101));
-    }
-
-
-    /**
-     * Tests rejection of combined turning percentages exceeding 100 percent.
-     */
-    @Test
-    public void testCombinedTurnPercentage()
-    {
-        Map<Direction, Integer> rates = createValidRates();
-
-        assertInvalid(() -> new SimulationConfig(rates, 30, 30, 600, 70, 40));
-
-        SimulationConfig valid =
-            new SimulationConfig(rates, 30, 30, 600, 70, 30);
-
-        assertEquals(70, valid.getLeftTurnPercent());
-        assertEquals(30, valid.getUTurnPercent());
-    }
-
-
-    /**
-     * Tests that modifying the original arrival-rate map does not change an
-     * existing configuration.
-     */
-    @Test
-    public void testDefensiveCopy()
-    {
-        Map<Direction, Integer> rates = createValidRates();
+        rates.put(Direction.EAST, 0);
+        rates.put(Direction.WEST, 1800);
 
         SimulationConfig config =
-            new SimulationConfig(rates, 30, 30, 600, 20, 10);
-
-        rates.put(Direction.NORTH, 1200);
-        rates.remove(Direction.WEST);
-
-        assertEquals(600, config.getArrivalRatePerHour(Direction.NORTH));
-
-        assertEquals(500, config.getArrivalRatePerHour(Direction.WEST));
+            makeConfig(rates, 120, 20, 10, SimulationOptions.builder().build());
+        assertEquals(0, config.getArrivalRatePerHour(Direction.NORTH));
+        assertEquals(1800, config.getArrivalRatePerHour(Direction.SOUTH));
+        assertEquals(0, config.getArrivalRatePerHour(Direction.EAST));
+        assertEquals(1800, config.getArrivalRatePerHour(Direction.WEST));
     }
 
 
     /**
-     * Tests that the returned arrival-rate map cannot be modified.
+     * Rejects missing, null, and extra direction entries.
      */
     @Test
-    public void testUnmodifiableArrivalRates()
+    public void testInvalidArrivalMaps()
     {
-        SimulationConfig config = createValidConfig();
+        SimulationOptions options = SimulationOptions.builder().build();
+        assertInvalid(() -> makeConfig(null, 120, 20, 10, options));
 
-        Map<Direction, Integer> rates = config.getArrivalRatesPerHour();
+        Map<Direction, Integer> missing = makeRates();
+        missing.remove(Direction.EAST);
+        assertInvalid(() -> makeConfig(missing, 120, 20, 10, options));
 
+        Map<Direction, Integer> nullValue = makeRates();
+        nullValue.put(Direction.NORTH, null);
+        assertInvalid(() -> makeConfig(nullValue, 120, 20, 10, options));
+
+        Map<Direction, Integer> extra = new HashMap<>(makeRates());
+        extra.put(null, 10);
+        assertInvalid(() -> makeConfig(extra, 120, 20, 10, options));
+    }
+
+
+    /**
+     * Rejects arrival rates below zero and above 1800.
+     */
+    @Test
+    public void testOutOfRangeArrivalRates()
+    {
+        SimulationOptions options = SimulationOptions.builder().build();
+        for (Direction direction : Direction.values())
+        {
+            Map<Direction, Integer> negative = makeRates();
+            negative.put(direction, -1);
+            assertInvalid(() -> makeConfig(negative, 120, 20, 10, options));
+
+            Map<Direction, Integer> excessive = makeRates();
+            excessive.put(direction, 1801);
+            assertInvalid(() -> makeConfig(excessive, 120, 20, 10, options));
+        }
+    }
+
+
+    /**
+     * Verifies inclusive minimum and maximum run duration boundaries.
+     */
+    @Test
+    public void testDurationBoundaries()
+    {
+        SimulationOptions options = SimulationOptions.builder().build();
+        assertEquals(
+            60,
+            makeConfig(makeRates(), 60, 20, 10, options).getDurationSeconds());
+        assertEquals(
+            7200,
+            makeConfig(makeRates(), 7200, 20, 10, options)
+                .getDurationSeconds());
+    }
+
+
+    /**
+     * Rejects duration values below or above the permitted range.
+     */
+    @Test
+    public void testInvalidDurations()
+    {
+        SimulationOptions options = SimulationOptions.builder().build();
+        assertInvalid(() -> makeConfig(makeRates(), 59, 20, 10, options));
+        assertInvalid(() -> makeConfig(makeRates(), 7201, 20, 10, options));
+        assertInvalid(() -> makeConfig(makeRates(), -1, 20, 10, options));
+    }
+
+
+    /**
+     * Accepts zero and full-scale probabilities when their sum is valid.
+     */
+    @Test
+    public void testValidTurnPercentageBoundaries()
+    {
+        SimulationOptions options = SimulationOptions.builder().build();
+        SimulationConfig allStraight =
+            makeConfig(makeRates(), 120, 0, 0, options);
+        assertEquals(0, allStraight.getLeftTurnPercent());
+        assertEquals(0, allStraight.getUTurnPercent());
+
+        SimulationConfig allLeft =
+            makeConfig(makeRates(), 120, 100, 0, options);
+        assertEquals(100, allLeft.getLeftTurnPercent());
+
+        SimulationConfig allUTurn =
+            makeConfig(makeRates(), 120, 0, 100, options);
+        assertEquals(100, allUTurn.getUTurnPercent());
+
+        SimulationConfig mixed = makeConfig(makeRates(), 120, 65, 35, options);
+        assertEquals(65, mixed.getLeftTurnPercent());
+        assertEquals(35, mixed.getUTurnPercent());
+    }
+
+
+    /**
+     * Rejects negative and over-100 individual turning percentages.
+     */
+    @Test
+    public void testInvalidIndividualTurnPercentages()
+    {
+        SimulationOptions options = SimulationOptions.builder().build();
+        assertInvalid(() -> makeConfig(makeRates(), 120, -1, 0, options));
+        assertInvalid(() -> makeConfig(makeRates(), 120, 101, 0, options));
+        assertInvalid(() -> makeConfig(makeRates(), 120, 0, -1, options));
+        assertInvalid(() -> makeConfig(makeRates(), 120, 0, 101, options));
+    }
+
+
+    /**
+     * Rejects a combined left-turn and U-turn probability above 100%.
+     */
+    @Test
+    public void testCombinedTurnPercentages()
+    {
+        SimulationOptions options = SimulationOptions.builder().build();
+        assertInvalid(() -> makeConfig(makeRates(), 120, 80, 21, options));
+        assertInvalid(() -> makeConfig(makeRates(), 120, 100, 1, options));
+    }
+
+
+    /**
+     * Rejects null options rather than creating a partially configured run.
+     */
+    @Test
+    public void testNullOptionsRejected()
+    {
+        assertInvalid(() -> makeConfig(makeRates(), 120, 20, 10, null));
+    }
+
+
+    /**
+     * Rejects a null direction when reading an arrival rate.
+     */
+    @Test
+    public void testNullDirectionRejected()
+    {
+        SimulationConfig config = makeConfig(
+            makeRates(),
+            120,
+            20,
+            10,
+            SimulationOptions.builder().build());
+        assertInvalid(() -> config.getArrivalRatePerHour(null));
+    }
+
+
+    /**
+     * Tests defensive copying of caller-owned maps after construction.
+     */
+    @Test
+    public void testInputMapIsDefensivelyCopied()
+    {
+        Map<Direction, Integer> input = makeRates();
+        SimulationConfig config =
+            makeConfig(input, 120, 20, 10, SimulationOptions.builder().build());
+
+        input.put(Direction.NORTH, 1200);
+        input.remove(Direction.EAST);
+        assertEquals(600, config.getArrivalRatePerHour(Direction.NORTH));
+        assertEquals(300, config.getArrivalRatePerHour(Direction.EAST));
+        assertEquals(4, config.getArrivalRatesPerHour().size());
+    }
+
+
+    /**
+     * Tests that callers cannot edit the returned arrival-rate map.
+     */
+    @Test
+    public void testReturnedMapCannotBeModified()
+    {
+        SimulationConfig config = makeConfig(
+            makeRates(),
+            120,
+            20,
+            10,
+            SimulationOptions.builder().build());
         try
         {
-            rates.put(Direction.NORTH, 1200);
+            config.getArrivalRatesPerHour().put(Direction.WEST, 1700);
             fail("Expected UnsupportedOperationException");
         }
-        catch (UnsupportedOperationException e)
+        catch (UnsupportedOperationException expected)
         {
-            // Expected exception.
+            // Read-only map correctly rejected mutation.
         }
-
-        assertEquals(600, config.getArrivalRatePerHour(Direction.NORTH));
+        assertEquals(150, config.getArrivalRatePerHour(Direction.WEST));
     }
 
 
     /**
-     * Tests rejection of a null direction when requesting an individual arrival
-     * rate.
+     * Tests that builder changes cannot mutate the saved immutable options.
      */
     @Test
-    public void testNullDirectionGetter()
+    public void testOptionsRemainImmutable()
     {
-        SimulationConfig config = createValidConfig();
+        SimulationOptions.Builder builder =
+            SimulationOptions.builder().minGreenSeconds(15).randomSeed(123L);
+        SimulationOptions options = builder.build();
+        SimulationConfig config = makeConfig(makeRates(), 120, 20, 10, options);
 
-        assertInvalid(() -> config.getArrivalRatePerHour(null));
+        builder.minGreenSeconds(25).randomSeed(999L);
+        SimulationOptions modifiedOptions = builder.build();
+        assertEquals(15, config.getOptions().getMinGreenSeconds());
+        assertEquals(123L, config.getOptions().getRandomSeed());
+        assertEquals(25, modifiedOptions.getMinGreenSeconds());
+        assertEquals(999L, modifiedOptions.getRandomSeed());
+    }
+
+
+    /**
+     * Tests that two independent configurations retain their own settings.
+     */
+    @Test
+    public void testIndependentConfigurations()
+    {
+        SimulationConfig first = makeConfig(
+            makeRates(),
+            120,
+            20,
+            10,
+            SimulationOptions.builder().randomSeed(7L).build());
+        Map<Direction, Integer> changedRates = makeRates();
+        changedRates.put(Direction.NORTH, 900);
+        SimulationConfig second = makeConfig(
+            changedRates,
+            300,
+            40,
+            5,
+            SimulationOptions.builder().randomSeed(8L).build());
+
+        assertEquals(600, first.getArrivalRatePerHour(Direction.NORTH));
+        assertEquals(120, first.getDurationSeconds());
+        assertEquals(7L, first.getOptions().getRandomSeed());
+        assertEquals(900, second.getArrivalRatePerHour(Direction.NORTH));
+        assertEquals(300, second.getDurationSeconds());
+        assertEquals(8L, second.getOptions().getRandomSeed());
     }
 }

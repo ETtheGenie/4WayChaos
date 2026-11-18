@@ -1,3 +1,4 @@
+
 package defaultPackage;
 
 import java.util.Collections;
@@ -5,157 +6,121 @@ import java.util.EnumMap;
 import java.util.Map;
 
 /**
- * Stores the configuration parameters for a traffic intersection simulation.
- * All configuration values are validated during construction. Once created, a
- * SimulationConfig object cannot be modified.
+ * Immutable configuration for one V2 traffic simulation. Stores the four
+ * approach arrival rates, run duration, turning probabilities, and validated
+ * adaptive signal, emergency-vehicle, and incident options. Simulation behavior
+ * and randomness are managed by other model classes.
  */
-public class SimulationConfig
+public final class SimulationConfig
 {
 
-    // Allowed configuration limits
     public static final int MIN_ARRIVAL_RATE = 0;
     public static final int MAX_ARRIVAL_RATE = 1800;
-
-    public static final int MIN_GREEN_SECONDS = 5;
-    public static final int MAX_GREEN_SECONDS = 120;
-
     public static final int MIN_DURATION_SECONDS = 60;
     public static final int MAX_DURATION_SECONDS = 7200;
-
     public static final int MIN_TURN_PERCENT = 0;
     public static final int MAX_TURN_PERCENT = 100;
 
-    // Simulation configuration
     private final Map<Direction, Integer> arrivalRatesPerHour;
-    private final int nsGreenSeconds;
-    private final int ewGreenSeconds;
     private final int durationSeconds;
     private final int leftTurnPercent;
     private final int uTurnPercent;
+    private final SimulationOptions options;
 
     /**
-     * Constructs a validated simulation configuration. Arrival rates must be
-     * provided for all four approaches. Turning percentages apply to all
-     * incoming vehicles.
+     * Creates a validated V2 configuration. Turning percentages are independent
+     * probabilities for each new vehicle; straight-through probability is 100 -
+     * leftTurnPercent - uTurnPercent.
      *
      * @param arrivalRatesPerHour
-     *            arrival rates by direction
-     * @param nsGreenSeconds
-     *            north-south green duration
-     * @param ewGreenSeconds
-     *            east-west green duration
+     *            rates for all four directions, in vehicles/hour
      * @param durationSeconds
-     *            total simulation duration
+     *            duration of the simulation, in simulated seconds
      * @param leftTurnPercent
-     *            percentage turning left
+     *            probability of a left turn, from 0 to 100
      * @param uTurnPercent
-     *            percentage making U-turns
+     *            probability of a U-turn, from 0 to 100
+     * @param options
+     *            non-null immutable V2 simulation options
      * @throws IllegalArgumentException
-     *             if any configuration parameter is invalid
+     *             if any argument is invalid
      */
     public SimulationConfig(
         Map<Direction, Integer> arrivalRatesPerHour,
-        int nsGreenSeconds,
-        int ewGreenSeconds,
         int durationSeconds,
         int leftTurnPercent,
-        int uTurnPercent)
+        int uTurnPercent,
+        SimulationOptions options)
     {
 
-        // Validate arrival-rate map
-        if (arrivalRatesPerHour == null)
-        {
-            throw new IllegalArgumentException("Arrival rates cannot be null.");
-        }
-
-        if (arrivalRatesPerHour.size() != Direction.values().length)
+        if (arrivalRatesPerHour == null
+            || arrivalRatesPerHour.size() != Direction.values().length)
         {
             throw new IllegalArgumentException(
-                "Arrival rates must include all four directions.");
+                "Arrival rates must contain exactly four directions.");
         }
 
-        // Copy and validate each arrival rate
-        EnumMap<Direction, Integer> rates = new EnumMap<>(Direction.class);
-
+        // Validate the entire map before retaining any settings.
+        EnumMap<Direction, Integer> copy = new EnumMap<>(Direction.class);
         for (Direction direction : Direction.values())
         {
-
             Integer rate = arrivalRatesPerHour.get(direction);
-
-            if (rate == null)
+            if (rate == null || rate < MIN_ARRIVAL_RATE
+                || rate > MAX_ARRIVAL_RATE)
             {
                 throw new IllegalArgumentException(
-                    "Missing arrival rate for " + direction);
+                    "Invalid arrival rate for " + direction + ".");
             }
-
-            if (rate < MIN_ARRIVAL_RATE || rate > MAX_ARRIVAL_RATE)
-            {
-                throw new IllegalArgumentException(
-                    "Invalid arrival rate for " + direction
-                        + ". Must be between " + MIN_ARRIVAL_RATE + " and "
-                        + MAX_ARRIVAL_RATE + ".");
-            }
-
-            rates.put(direction, rate);
+            copy.put(direction, rate);
         }
 
-        // Validate signal durations
-        if (nsGreenSeconds < MIN_GREEN_SECONDS
-            || nsGreenSeconds > MAX_GREEN_SECONDS)
-        {
-            throw new IllegalArgumentException(
-                "Invalid north-south green duration.");
-        }
-
-        if (ewGreenSeconds < MIN_GREEN_SECONDS
-            || ewGreenSeconds > MAX_GREEN_SECONDS)
-        {
-            throw new IllegalArgumentException(
-                "Invalid east-west green duration.");
-        }
-
-        // Validate simulation duration
         if (durationSeconds < MIN_DURATION_SECONDS
             || durationSeconds > MAX_DURATION_SECONDS)
         {
-            throw new IllegalArgumentException("Invalid simulation duration.");
+            throw new IllegalArgumentException(
+                "Duration must be between " + MIN_DURATION_SECONDS + " and "
+                    + MAX_DURATION_SECONDS + " seconds.");
         }
 
-        // Validate turning percentages
         if (leftTurnPercent < MIN_TURN_PERCENT
             || leftTurnPercent > MAX_TURN_PERCENT)
         {
-            throw new IllegalArgumentException("Invalid left-turn percentage.");
+            throw new IllegalArgumentException(
+                "Left-turn percentage must be between 0 and 100.");
         }
 
         if (uTurnPercent < MIN_TURN_PERCENT || uTurnPercent > MAX_TURN_PERCENT)
         {
-            throw new IllegalArgumentException("Invalid U-turn percentage.");
+            throw new IllegalArgumentException(
+                "U-turn percentage must be between 0 and 100.");
         }
 
-        if (leftTurnPercent + uTurnPercent > 100)
+        if (leftTurnPercent + uTurnPercent > MAX_TURN_PERCENT)
         {
             throw new IllegalArgumentException(
-                "Combined turning percentages cannot exceed 100.");
+                "Combined left-turn and U-turn percentages cannot exceed 100.");
         }
 
-        // Store validated configuration
-        this.arrivalRatesPerHour = Collections.unmodifiableMap(rates);
+        if (options == null)
+        {
+            throw new IllegalArgumentException(
+                "Simulation options cannot be null.");
+        }
 
-        this.nsGreenSeconds = nsGreenSeconds;
-        this.ewGreenSeconds = ewGreenSeconds;
+        this.arrivalRatesPerHour = Collections.unmodifiableMap(copy);
         this.durationSeconds = durationSeconds;
         this.leftTurnPercent = leftTurnPercent;
         this.uTurnPercent = uTurnPercent;
+        this.options = options;
     }
 
 
     /**
-     * Returns the configured arrival rate for an approach.
+     * Returns the arrival rate for an incoming direction.
      *
      * @param direction
-     *            incoming traffic direction
-     * @return arrival rate in vehicles per hour
+     *            incoming direction
+     * @return vehicles per hour for that direction
      * @throws IllegalArgumentException
      *             if direction is null
      */
@@ -165,15 +130,14 @@ public class SimulationConfig
         {
             throw new IllegalArgumentException("Direction cannot be null.");
         }
-
         return arrivalRatesPerHour.get(direction);
     }
 
 
     /**
-     * Returns an unmodifiable map of all arrival rates.
+     * Returns an unmodifiable map of the four configured arrival rates.
      *
-     * @return arrival rates indexed by direction
+     * @return direction-indexed arrival rates
      */
     public Map<Direction, Integer> getArrivalRatesPerHour()
     {
@@ -182,31 +146,9 @@ public class SimulationConfig
 
 
     /**
-     * Returns the north-south green duration.
+     * Returns total simulation duration.
      *
-     * @return green duration in seconds
-     */
-    public int getNsGreenSeconds()
-    {
-        return nsGreenSeconds;
-    }
-
-
-    /**
-     * Returns the east-west green duration.
-     *
-     * @return green duration in seconds
-     */
-    public int getEwGreenSeconds()
-    {
-        return ewGreenSeconds;
-    }
-
-
-    /**
-     * Returns the simulation duration.
-     *
-     * @return simulation duration in seconds
+     * @return duration in seconds
      */
     public int getDurationSeconds()
     {
@@ -215,9 +157,9 @@ public class SimulationConfig
 
 
     /**
-     * Returns the left-turn percentage.
+     * Returns the probability of a left turn for each generated vehicle.
      *
-     * @return percentage of vehicles turning left
+     * @return left-turn percentage
      */
     public int getLeftTurnPercent()
     {
@@ -226,12 +168,23 @@ public class SimulationConfig
 
 
     /**
-     * Returns the U-turn percentage.
+     * Returns the probability of a U-turn for each generated vehicle.
      *
-     * @return percentage of vehicles making U-turns
+     * @return U-turn percentage
      */
     public int getUTurnPercent()
     {
         return uTurnPercent;
+    }
+
+
+    /**
+     * Returns immutable V2 behavior settings.
+     *
+     * @return non-null options object
+     */
+    public SimulationOptions getOptions()
+    {
+        return options;
     }
 }
