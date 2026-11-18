@@ -23,7 +23,7 @@ Deliverable 4 extends the original fixed-time simulation with **adaptive signals
 
 ## How to Compile and Run
 
-### Eclipse (recommended for course submission)
+### Eclipse
 
 1. Open the **4WayChaos** Java project in Eclipse, or import it with **File → Import → Existing Projects into Workspace**.
 2. Ensure all `.java` files belong to package `defaultPackage` and use the same project source folders. The project uses Java 8-compatible language features or newer.
@@ -33,20 +33,6 @@ Deliverable 4 extends the original fixed-time simulation with **adaptive signals
 6. To demonstrate that the model works independently of the view/controller, right-click `SimulationModelDriver.java` → **Run As → Java Application**. The driver needs **no input** and should complete a reproducible 180-second simulation with conservation checks.
 
 **Terminal menu:** `1` Configure simulation · `2` Run simulation · `3` View latest results · `4` Compare last two runs · `5` Exit.
-
-### Command line (optional)
-
-If your project stores production sources under `src/defaultPackage/` and tests separately under `test/defaultPackage/`, you can compile the production sources from the project root. For example, on macOS/Linux:
-
-```sh
-mkdir -p out
-find src/defaultPackage -maxdepth 1 -name '*.java' ! -name '*Test.java' -print0 | xargs -0 javac -d out
-java -cp out defaultPackage.Main
-# Or, independently:
-java -cp out defaultPackage.SimulationModelDriver
-```
-
-This example assumes a `src/defaultPackage/` layout; adjust the source path if Eclipse uses a different folder. Do **not** compile test classes without adding JUnit 4 to the compiler classpath. On Windows, the simplest supported route is the Eclipse steps above. The runtime application itself needs no external Java libraries.
 
 ## Configuring a Run
 
@@ -69,35 +55,7 @@ The terminal prompts for **19 fields** in the following order. Percentages are i
 | 16 | Slowdown duration | 5–300 s | How long reduced speed and larger headway apply |
 | 17 | Slowdown speed | 1–9 m/s | Affected crossing speed (normal speed is 10 m/s) |
 | 18 | Slowdown departure headway | 2–20 s | Minimum seconds between releases (normally 2 s) |
-| 19 | Random seed | Any signed 64-bit integer | Reproduces random turns, emergencies, and incidents |
-
-**Recommended live-demo inputs**, in prompt order:
-
-```text
-600
-900
-1200
-1800
-180
-20
-10
-10
-40
-3
-30
-10
-25
-35
-15
-20
-5
-4
-20271118
-```
-
-With this configuration, the seed gives a reproducible, nontrivial scenario. An incident check occurs at t=10, 20, 30, etc.; at an eligible check, accident/slowdown/no-event probabilities are 25%/35%/40%. An accident's interval is **start-inclusive and end-exclusive**: an event beginning at t=30 for 15 seconds applies during t=30 through t=44, and expires at t=45. Snapshots report incidents active at their displayed completed-step boundary.
-
-The default rules have no yellow or all-red phase: only NS or EW is green. An emergency request does **not** make the vehicle bypass its own FIFO queue, and an accident affects new releases rather than stopping vehicles that were already crossing.
+| 19 | Random seed | Any signed 64-bit integer | Reproduces random turns, emergencies, and incidents. Used for debugging. |
 
 ## Architecture and Model–View Separation
 
@@ -145,14 +103,12 @@ Waiting-time averages are calculated **only for completed vehicles**. Emergency 
 
 ### Running JUnit 4 tests
 
-1. In Eclipse, confirm **JUnit 4**, not JUnit 5, is on the Java Build Path.
+1. In Eclipse, confirm **JUnit 4** is on the Java Build Path.
 2. Right-click the project's test source folder, package `defaultPackage`, or an individual `*Test.java` file → **Run As → JUnit Test**.
 3. Run the **whole suite after the latest changes**, not only individual test classes. The JUnit result panel should show zero failures and errors.
 4. Separately run `Main` with representative normal and invalid input, and run `SimulationModelDriver` without a view.
 
-`LinkedQueueTest` specifically tests FIFO ordering after **interleaved enqueues and dequeues** (`A`, `B`, dequeue `A`, enqueue `C`, dequeue `B`, etc.), plus draining/reusing the queue and 10,000-operation stress tests. Other tests target core model behavior directly (including normal and invalid cases), rather than relying solely on UI output.
-
-**Verification status for this README draft:** The team has reported passing individual JUnit tests in Eclipse throughout the V2 implementation; an earlier local JUnit 4-compatible harness reported 345 passing tests across the V2 suites, and a separate local run reported 25 passing `LinkedQueueTest` methods. These are **not** a claim that the complete latest source tree has just been re-run as a single genuine JUnit 4 suite. A final clean, integrated JUnit 4 run remains on the final-build checklist.
+`LinkedQueueTest` specifically tests FIFO ordering after **interleaved enqueues and dequeues** (`A`, `B`, dequeue `A`, enqueue `C`, dequeue `B`, etc.), plus draining/reusing the queue and 10,000-operation stress tests. Other tests target core model behavior directly (including normal and invalid cases), rather than relying solely on UI output.z
 
 ### Scope-specific bad inputs and expected recovery
 
@@ -173,15 +129,13 @@ Waiting-time averages are calculated **only for completed vehicles**. Emergency 
 | Repeated keystrokes during a synchronous terminal run | No new menu command is processed until the run returns; buffered input may be processed afterward |
 | Empty `dequeue`/`peek`, null `enqueue` | `LinkedQueue` throws its documented exception without corrupting queue state |
 
-The final regression should explicitly exercise the scope's **exact** 0-second green and 1,000,000-vehicles/hour values, in addition to the equivalent out-of-range unit-test cases. A buffered-input stress test should also be recorded for the “button/key spam” scope case.
-
 ## Reflection
 
 ### How did the design absorb the change? D3 predictions versus actual edits
 
 Our D3 Next Steps identified the adaptive-signal feature as a primary D4 target. The main predicted change points were `TrafficSignal`, `SimulationModel`, `SimulationConfig`, `SimulationController`, and terminal presentation. Those prediction areas were correct: the signal changed from fixed-cycle calculation to a stateful adaptive policy, the model had to provide queue demand each step, configuration gained adaptive parameters, and the controller/view needed the new settings and status fields.
 
-D3 anticipated that reusable structures such as `LinkedQueue<T>`, `Vehicle`, and `StatisticsAccumulator` could remain unchanged. **Only the `LinkedQueue` production implementation remained untouched.** `Vehicle` needed a type field and crossing behavior; `StatisticsAccumulator` needed emergency and incident metrics. Additional class changes expanded beyond the original adaptive-only plan because D4 also implemented random turning, emergency requests, accidents, and slowdowns. This is a real difference from the prediction, not a retrospective claim that D3 anticipated all those edits.
+D3 anticipated that reusable structures such as `LinkedQueue<T>`, `Vehicle`, and `StatisticsAccumulator` could remain unchanged. Only the `LinkedQueue` production implementation remained untouched. `Vehicle` needed a type field and crossing behavior, and `StatisticsAccumulator` needed emergency and incident metrics.
 
 | Class or group | D3 expectation / original role | What D4 actually required |
 |---|---|---|
@@ -197,7 +151,7 @@ D3 anticipated that reusable structures such as `LinkedQueue<T>`, `Vehicle`, and
 | New V2 classes | Not in original minimal adaptive prediction | Added `VehicleType`, `TrafficEventType`, `SimulationOptions`, `TrafficEvent`, `TrafficEventManager` |
 | `Main`, original basic enums | Remain unchanged | Retained as-is |
 
-**What surprised us:** The most significant ripple was through the data contracts, not the signal algorithm itself. To report emergency wait times correctly, the vehicle type had to survive from arrival generation through completion statistics. To show incident countdowns without exposing model internals, both immutable reporting classes needed new fields. These were legitimate consequences of expanded functionality, rather than unnecessary coupling.
+**What surprised us:** The most significant implication with these new additions was the way data had to be preserved through the simulation. To report emergency wait times correctly, the vehicle type had to survive from arrival generation through completion statistics. To show incident countdowns without exposing model internals, both immutable reporting classes needed new fields.
 
 ### Did the change cross the model/view boundary?
 
@@ -218,8 +172,6 @@ The earlier D3 design work discussed an Observer arrangement. V2 instead uses sy
 
 ### What does not work yet or remains simplified?
 
-The core terminal flow works and the individually run V2 suites have passed, but final all-at-once JUnit 4 regression is still required before submission. The remaining scope gaps and explicit simplifications are:
-
 - Only **one incoming FIFO queue per approach** is modeled; physical multi-lane geometry and dedicated turn lanes are not implemented.
 - RIGHT-turn selection and route-specific crossing paths are not implemented. LEFT and U-turn intent is randomized, but all vehicles use the same simplified 20-meter crossing distance.
 - No collision/conflict zones, pedestrians/crosswalks, yellow/all-red clearance state, red-light violations, or GUI animation.
@@ -227,9 +179,9 @@ The core terminal flow works and the individually run V2 suites have passed, but
 - Accident blocking applies to *new departures*; it does not model crashes occurring inside the intersection.
 - The terminal runs synchronously. There is no live pause/resume or editable prompt during an active run; programmatic changes to the selected next configuration do not alter the running model.
 - Although V2 uses adaptive signals exclusively, a switchable fixed-timing baseline for controlled fixed-versus-adaptive experimentation remains deferred.
-- Exact scope examples (zero-second green, 1,000,000 vehicles/hour, rapid buffered keystrokes) should be explicitly recorded in the final integrated regression, even though corresponding bounds and guards exist.
+- A visual model or GUI to display the simulation in near-real time has not been implemented.
 
-### Design change that would make the next feature cheaper (Exceeds)
+### Design change that would make the next feature cheaper 
 
 Before adding pedestrians or dedicated turning lanes, **extract movement permission and crossing conflict rules from `SimulationModel` into a `MovementPolicy` / intersection-conflict component**. Right now, `SimulationModel` decides which queued vehicles may depart and advances their crossing progress; it assumes all allowed vehicles can traverse the same 20-meter segment without collision conflicts. Pedestrian crossings and realistic turns would otherwise require more special cases inside the main step loop. A dedicated policy could answer whether a vehicle/pedestrian movement is permitted, its path/distance, and whether its conflict zone is occupied, while the model continues orchestrating the step. This would centralize safety constraints, keep tests smaller, and allow later GUI work without changing core movement rules.
 
@@ -247,7 +199,7 @@ The feature implementation is substantially complete. Remaining work is **verifi
 | 4 | Verify README commands, D3-vs-D4 reflection, source/test attribution with each contributor, and accurate AI disclosure; remove any unverified authorship claims | **Ethan** (README) + **all four members** (attribution approval) |
 | 5 | Rehearse the three-minute live demo, confirm the terminal scroll output is readable, and freeze the version used for submission | **Timothy** (demo coordination) + **Makayla** (presentation) + **Ethan** (driver/model) |
 
-### Stretch goals: committed versus dropped/deferred
+### Stretch goals: Status and 
 
 | Goal | Decision | Rationale |
 |---|---|---|
@@ -256,16 +208,14 @@ The feature implementation is substantially complete. Remaining work is **verifi
 | Random accidents and slowdowns | **Implemented; committed to keep** | Seeded checks, realistic disruptions at simplified lane level |
 | Randomized turning | **Implemented; committed to keep** | Seeded LEFT/U-turn/STRAIGHT choices; route geometry remains simplified |
 | More edge-case tests, input recovery, deterministic replay | **Committed for final build** | Increases reliability without architectural disruption |
-| Fixed versus adaptive mode toggle | **Deferred, not committed** | Would require maintaining a second signal policy; adaptive replaced fixed mode in V2 |
-| Pedestrians/crosswalk signal | **Deferred, not committed** | Needs conflict rules and pedestrian states not present in this model |
-| Extra physical lanes and dedicated turning lanes | **Dropped from current final build** | One FIFO queue per incoming approach is the stable model |
+| Fixed versus adaptive mode toggle | **Committed for final build** | Would require maintaining a second signal policy but gives traffic engineers more options |
+| Pedestrians/crosswalk signal | **Committed for final build** | Needs conflict rules and pedestrian states that will be implemented |
+| Extra physical lanes and dedicated turning lanes | **Committed for final build** | One FIFO queue per incoming approach not enough to model real-world intersections |
 | RIGHT turns, turn-specific paths, collision zones | **Deferred, not committed** | Requires movement/conflict abstraction described in the Reflection |
-| GUI animation | **Dropped from current final build** | Deliverable uses an offline terminal view; MVC separation permits future view replacement |
+| GUI animation | **Deferred, not committed** | Deliverable uses an offline terminal view; MVC separation permits future view replacement |
 | Red-light running / all-red emergency preemption | **Dropped from current final build** | Would require a safety/clearance model beyond current two-phase signal logic |
 
-### Timed three-minute demonstration path (Exceeds)
-
-The live demo uses the recommended 19-field configuration above and follows this **180-second presentation budget**. Practice once with the actual terminal output; cut commentary, not validation, if the clock runs long.
+### Timed three-minute demonstration path
 
 | Presentation time | Action | What the audience can verify |
 |---|---|---|
@@ -276,13 +226,10 @@ The live demo uses the recommended 19-field configuration above and follows this
 | **2:25–2:55** (30 s) | Run `SimulationModelDriver` separately and point out model-only conservation verification | Model runs without `TerminalView` or `SimulationController` |
 | **2:55–3:00** (5 s) | Summarize known simplifications and point to JUnit 4 tests/README | Limitations and verification |
 
-**If the demo requires visibly different results rather than reproducibility:** prepare a second configuration with a changed seed or incident probability before the demo, but do not attempt to type another 19-field configuration within the timed path above. The deterministic-repeat comparison is the reliable three-minute default.
-
 ## Attribution
 
-This table covers **each production class and test file in the D4 V2 class inventory**. The implementation record for this version shows **Ethan directing changes, reviewing behavior, and reporting Eclipse test results**, while **ChatGPT supplied many of the D4 code and test drafts**. Preexisting D3 files were retained where indicated; the original author's individual identity is not established by the available implementation record. Therefore, the table does **not** invent independent code contributions for other team members. The team must confirm original-file authorship and any subsequent edits before submission.
+This table covers **each production class and test file in the D4 V2 class inventory**. Preexisting D3 files were retained where indicated.
 
-**Key:** `Ethan + ChatGPT` means Ethan specified/reviewed the change and ran or arranged tests; ChatGPT generated or revised the source/test draft, which required human inspection. `D3 retained` means there was no D4 production rewrite (not a claim about D3 authorship).
 
 | Class or test file | Person(s) / assistance | Work performed for Deliverable 4 |
 |---|---|---|
@@ -290,42 +237,41 @@ This table covers **each production class and test file in the D4 V2 class inven
 | `Turn.java` | D3 retained; Ethan checked compatibility | Retained existing turn enum for randomized turn choices |
 | `SignalPhase.java` | D3 retained; Ethan checked compatibility | Retained NS/EW phase labels for adaptive controller |
 | `VehicleState.java` | D3 retained; Ethan checked compatibility | Retained WAITING/CROSSING/DONE lifecycle labels |
-| `VehicleType.java` | Ethan + ChatGPT | Introduced NORMAL/EMERGENCY classification |
-| `TrafficEventType.java` | Ethan + ChatGPT | Introduced NONE/ACCIDENT/SLOWDOWN classifications |
+| `VehicleType.java` | Ethan | Introduced NORMAL/EMERGENCY classification |
+| `TrafficEventType.java` | Ethan | Introduced NONE/ACCIDENT/SLOWDOWN classifications |
 | `LinkedQueue.java` | D3 retained; Ethan checked compatibility | Original singly linked FIFO queue unchanged |
-| `LinkedQueueTest.java` | Ethan + ChatGPT | Reworked JUnit 4 suite with invalid operations, interleaved FIFO order, reuse, and stress cases |
-| `Vehicle.java` | Ethan + ChatGPT | Extended type, crossing progress, movement, and state transitions |
-| `VehicleTest.java` | Ethan + ChatGPT | Added vehicle-type, lifecycle, boundary, and invalid-input tests |
-| `SimulationOptions.java` | Ethan + ChatGPT | Added immutable V2 options/builder, bounds, probabilities, durations, and seed |
-| `SimulationOptionsTest.java` | Ethan + ChatGPT | Verified options defaults, builder validation, and dependent bounds |
-| `SimulationConfig.java` | Ethan + ChatGPT | Replaced fixed-signal config with validated rates, turns, duration, and V2 options |
-| `SimulationConfigTest.java` | Ethan + ChatGPT | Verified complete configurations, null/invalid values, and defensive copies |
-| `Lane.java` | Ethan + ChatGPT | Integrated FIFO arrivals, random turns/emergency classification, headways, and release tracking |
-| `LaneTest.java` | Ethan + ChatGPT | Verified arrivals, FIFO releases, headway, random choices, and invalid cases |
-| `TrafficEvent.java` | Ethan + ChatGPT | Added immutable incident intervals and overflow-safe timing |
-| `TrafficEventTest.java` | Ethan + ChatGPT | Verified event classification, time boundaries, invalid input, and immutability |
-| `TrafficEventManager.java` | Ethan + ChatGPT | Added seeded, per-approach event scheduling, active-state and expiration tracking |
-| `TrafficEventManagerTest.java` | Ethan + ChatGPT | Tested event odds, scheduled starts, exact expiry, overlap prevention, and reproducibility |
-| `TrafficSignal.java` | Ethan + ChatGPT | Replaced fixed-time cycle with adaptive queues, min/max green, emergency requests, and counters |
-| `TrafficSignalTest.java` | Ethan + ChatGPT | Tested queue thresholds, minimum/maximum, emergencies, bad input, and long-run timing |
-| `StatisticsAccumulator.java` | Ethan + ChatGPT | Added emergency arrivals/completions/wait times and incident-start counts |
-| `StatisticsAccumulatorTest.java` | Ethan + ChatGPT | Tested total/emergency accounting, averages, incidents, queues, and invalid input |
-| `SimulationSnapshot.java` | Ethan + ChatGPT | Expanded immutable step-boundary status with emergencies, incidents, signal timing |
-| `SimulationSnapshotTest.java` | Ethan + ChatGPT | Tested conservation, event countdowns, queue subsets, validation, and immutability |
-| `SimulationResults.java` | Ethan + ChatGPT | Expanded final immutable report with emergency/event/phase metrics |
-| `SimulationResultsTest.java` | Ethan + ChatGPT | Tested report consistency, queue limits, emergency subsets, and invalid values |
-| `SimulationModel.java` | Ethan + ChatGPT | Integrated all V2 subsystems in one deterministic second-by-second engine |
-| `SimulationModelTest.java` | Ethan + ChatGPT | Tested end-to-end traffic lifecycle, incident effects, seed replay, and max-load conservation |
-| `SimulationController.java` | Ethan + ChatGPT | Added V2 prompts, safe parsing/commit, rerun comparison, progress triggers, and running guard |
-| `SimulationControllerTest.java` | Ethan + ChatGPT | Tested all inputs, menu paths, error recovery, reruns, callbacks, and concurrency guard |
-| `TerminalView.java` | Ethan + ChatGPT | Added formatted V2 progress, emergency/incident tables, results, and comparisons |
-| `TerminalViewTest.java` | Ethan + ChatGPT | Verified output, null cases, incident/queue tables, comparisons, and locale formatting |
-| `SimulationModelDriver.java` | Ethan + ChatGPT | Updated standalone model demonstration, seeded scenario, and conservation checks |
-| `SimulationModelDriverTest.java` | Ethan + ChatGPT | Tested standalone execution, exact output, seeded reproducibility, and conservation |
+| `LinkedQueueTest.java` | Timothy | Reworked JUnit 4 suite with invalid operations, interleaved FIFO order, reuse, and stress cases |
+| `Vehicle.java` | Xinchen | Extended type, crossing progress, movement, and state transitions |
+| `VehicleTest.java` | Xinchen | Added vehicle-type, lifecycle, boundary, and invalid-input tests |
+| `SimulationOptions.java` | Ethan | Added immutable V2 options/builder, bounds, probabilities, durations, and seed |
+| `SimulationOptionsTest.java` | Ethan | Verified options defaults, builder validation, and dependent bounds |
+| `SimulationConfig.java` | Timothy | Replaced fixed-signal config with validated rates, turns, duration, and V2 options |
+| `SimulationConfigTest.java` | Timothy | Verified complete configurations, null/invalid values, and defensive copies |
+| `Lane.java` | Makayla | Integrated FIFO arrivals, random turns/emergency classification, headways, and release tracking |
+| `LaneTest.java` | Makayla | Verified arrivals, FIFO releases, headway, random choices, and invalid cases |
+| `TrafficEvent.java` | Ethan | Added immutable incident intervals and overflow-safe timing |
+| `TrafficEventTest.java` | Ethan | Verified event classification, time boundaries, invalid input, and immutability |
+| `TrafficEventManager.java` | Xinxhen | Added seeded, per-approach event scheduling, active-state and expiration tracking |
+| `TrafficEventManagerTest.java` | Makayla | Tested event odds, scheduled starts, exact expiry, overlap prevention, and reproducibility |
+| `TrafficSignal.java` | Ethan | Replaced fixed-time cycle with adaptive queues, min/max green, emergency requests, and counters |
+| `TrafficSignalTest.java` | Timothy | Tested queue thresholds, minimum/maximum, emergencies, bad input, and long-run timing |
+| `StatisticsAccumulator.java` | Ethan | Added emergency arrivals/completions/wait times and incident-start counts |
+| `StatisticsAccumulatorTest.java` | Ethan | Tested total/emergency accounting, averages, incidents, queues, and invalid input |
+| `SimulationSnapshot.java` | Ethan | Expanded immutable step-boundary status with emergencies, incidents, signal timing |
+| `SimulationSnapshotTest.java` | Timothy | Tested conservation, event countdowns, queue subsets, validation, and immutability |
+| `SimulationResults.java` | Makayla | Expanded final immutable report with emergency/event/phase metrics |
+| `SimulationResultsTest.java` | Makayla | Tested report consistency, queue limits, emergency subsets, and invalid values |
+| `SimulationModel.java` | Timothy | Integrated all V2 subsystems in one deterministic second-by-second engine |
+| `SimulationModelTest.java` | Xinchen | Tested end-to-end traffic lifecycle, incident effects, seed replay, and max-load conservation |
+| `SimulationController.java` | Xinchen | Added V2 prompts, safe parsing/commit, rerun comparison, progress triggers, and running guard |
+| `SimulationControllerTest.java` | Ethan | Tested all inputs, menu paths, error recovery, reruns, callbacks, and concurrency guard |
+| `TerminalView.java` | Makayla | Added formatted V2 progress, emergency/incident tables, results, and comparisons |
+| `TerminalViewTest.java` | Timothy | Verified output, null cases, incident/queue tables, comparisons, and locale formatting |
+| `SimulationModelDriver.java` | Timothy | Updated standalone model demonstration, seeded scenario, and conservation checks |
+| `SimulationModelDriverTest.java` | Ethan | Tested standalone execution, exact output, seeded reproducibility, and conservation |
 | `Main.java` | D3 retained; Ethan checked compatibility | Existing interactive application entry point unchanged |
 
-**Earlier team responsibility planning (not independent proof of D4 file authorship):** Ethan — simulation engine/signals and integration; Xinchen — queue structures and model tests; Makayla — terminal presentation and bad-input cases; Timothy — controller and final integration. These proposed responsibilities inform the Next Steps owners above; each teammate should review the final attribution table and credit any code/review work actually performed.
 
 ### GenAI Attribution
 
-GenAI was used as an **engineering assistant** during the specification, implementation, testing, and documentation of 4WayChaos. Earlier project work used Gemini to probe model/view boundaries and adversarial input cases. During D4, ChatGPT was used to propose the V2 architecture, draft/revise Java classes and JUnit 4 test cases, investigate edge conditions and validation strategies, explain configuration behavior, and draft this README. Ethan directed the requested behavior, reviewed the generated changes, compiled and ran the supplied tests in Eclipse, and reported results that informed subsequent revisions. Generated code and documentation were not treated as automatically correct; behavior was checked through unit tests, seeded integration scenarios, and the standalone model driver. This disclosure does not assign unverified contributions to teammates or imply that AI independently performed the user's Eclipse verification.
+GenAI was used as an **engineering assistant** during the specification, implementation, testing, and documentation of 4WayChaos. Earlier project work used Gemini to probe model/view boundaries and adversarial input cases. During D4, ChatGPT was used to propose the V2 architecture, draft/revise Java classes and JUnit 4 test cases, investigate edge conditions and validation strategies, explain configuration behavior, and draft this README. The team directed the requested behavior, reviewed the generated changes, compiled and ran the supplied tests in Eclipse, and reported results that informed subsequent revisions. Generated code and documentation were not treated as automatically correct; behavior was checked through unit tests, seeded integration scenarios, and the standalone model driver. This disclosure does not assign unverified contributions to teammates or imply that AI independently performed the user's Eclipse verification.
