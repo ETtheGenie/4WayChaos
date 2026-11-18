@@ -1,3 +1,4 @@
+
 package defaultPackage;
 
 import java.util.EnumMap;
@@ -6,16 +7,23 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Collects traffic statistics independently of the view. Records generated
- * arrivals, completed vehicles and their waiting times, and queue-length
- * samples for each direction during the simulation.
+ * Collects simulation statistics independently of the controller and view.
+ * Tracks arrivals, completed vehicle waiting times, emergency traffic, incident
+ * starts, and sampled queue lengths for every approach. Emergency vehicles are
+ * included in ordinary arrival and completion totals. Only completed vehicles
+ * contribute to waiting-time averages.
  */
-public class StatisticsAccumulator
+public final class StatisticsAccumulator
 {
 
     private int totalArrived;
+    private int totalEmergencyArrived;
     private int totalCompleted;
+    private int totalEmergencyCompleted;
     private long totalWaitingSecondsCompleted;
+    private long totalEmergencyWaitingSecondsCompleted;
+    private int totalAccidents;
+    private int totalSlowdowns;
     private int queueSampleCount;
 
     private final EnumMap<Direction, Long> queueLengthSums;
@@ -23,14 +31,18 @@ public class StatisticsAccumulator
     private final Set<Long> completedVehicleIds;
 
     /**
-     * Constructs a statistics accumulator with all counters and queue
-     * statistics initialized to zero.
+     * Creates an accumulator with empty completion history and zeroed counters.
      */
     public StatisticsAccumulator()
     {
         totalArrived = 0;
+        totalEmergencyArrived = 0;
         totalCompleted = 0;
+        totalEmergencyCompleted = 0;
         totalWaitingSecondsCompleted = 0L;
+        totalEmergencyWaitingSecondsCompleted = 0L;
+        totalAccidents = 0;
+        totalSlowdowns = 0;
         queueSampleCount = 0;
 
         queueLengthSums = new EnumMap<>(Direction.class);
@@ -46,35 +58,42 @@ public class StatisticsAccumulator
 
 
     /**
-     * Records a batch of newly generated vehicles. Intended to receive the
-     * count returned by Lane.generateArrivals().
+     * Records a batch of generated vehicles, including the emergency subset.
+     * Callers can obtain emergency counts from changes to each Lane's
+     * getTotalEmergencyGenerated() value when generating a batch.
      *
      * @param count
-     *            number of arriving vehicles
+     *            total new arrivals, including emergency vehicles
+     * @param emergencyCount
+     *            emergency vehicles among these arrivals
      * @throws IllegalArgumentException
-     *             if count is negative or causes integer overflow
+     *             if counts are invalid or totals overflow
      */
-    public void recordArrivals(int count)
+    public void recordArrivals(int count, int emergencyCount)
     {
-        if (count < 0 || count > Integer.MAX_VALUE - totalArrived)
+        if (count < 0 || emergencyCount < 0 || emergencyCount > count
+            || count > Integer.MAX_VALUE - totalArrived)
         {
-            throw new IllegalArgumentException("Invalid arrival count.");
+            throw new IllegalArgumentException("Invalid arrival counts.");
         }
 
         totalArrived += count;
+        totalEmergencyArrived += emergencyCount;
     }
 
 
     /**
-     * Records a vehicle that has finished crossing the intersection, including
-     * its waiting time. Each completed vehicle can only be recorded once.
+     * Records one completed vehicle and its queue waiting time. A vehicle ID
+     * can only be recorded once. Completed vehicles must also fit within the
+     * arrival totals for their vehicle classification.
      *
      * @param vehicle
-     *            completed vehicle
+     *            completed normal or emergency vehicle
      * @throws IllegalArgumentException
-     *             if vehicle is null or its completion was already recorded
+     *             if vehicle is null or ID was counted
      * @throws IllegalStateException
-     *             if vehicle is not DONE or completions would exceed arrivals
+     *             if vehicle is not DONE, or its completion would exceed
+     *             recorded arrivals of its type
      */
     public void recordCompletion(Vehicle vehicle)
     {
@@ -82,42 +101,96 @@ public class StatisticsAccumulator
         {
             throw new IllegalArgumentException("Vehicle cannot be null.");
         }
-
         if (vehicle.getState() != VehicleState.DONE)
         {
             throw new IllegalStateException(
                 "Only DONE vehicles can be counted.");
         }
-
         if (completedVehicleIds.contains(vehicle.getId()))
         {
             throw new IllegalArgumentException(
                 "Vehicle completion already recorded.");
         }
-
         if (totalCompleted >= totalArrived)
         {
             throw new IllegalStateException(
                 "Completions cannot exceed arrivals.");
         }
 
-        int waitingSeconds = vehicle.getWaitingTimeSeconds();
+        boolean emergency = vehicle.getVehicleType() == VehicleType.EMERGENCY;
+        if (emergency && totalEmergencyCompleted >= totalEmergencyArrived)
+        {
+            throw new IllegalStateException(
+                "Emergency completions cannot exceed emergency arrivals.");
+        }
+        int normalArrivals = totalArrived - totalEmergencyArrived;
+        int normalCompleted = totalCompleted - totalEmergencyCompleted;
+        if (!emergency && normalCompleted >= normalArrivals)
+        {
+            throw new IllegalStateException(
+                "Normal completions cannot exceed normal arrivals.");
+        }
 
+        int waitingSeconds = vehicle.getWaitingTimeSeconds();
         completedVehicleIds.add(vehicle.getId());
         totalCompleted++;
         totalWaitingSecondsCompleted += waitingSeconds;
+
+        if (emergency)
+        {
+            totalEmergencyCompleted++;
+            totalEmergencyWaitingSecondsCompleted += waitingSeconds;
+        }
     }
 
 
     /**
-     * Records one queue-length sample for every lane. This method should be
-     * called once after each simulation step updates vehicle queues. All four
-     * directions must be present, and each Lane must match its map key.
+     * Records one newly started accident or slowdown. Call this once for each
+     * new event returned by TrafficEventManager.updateForSecond(), not once per
+     * second while an event remains active.
+     *
+     * @param type
+     *            ACCIDENT or SLOWDOWN
+     * @throws IllegalArgumentException
+     *             if type is null or NONE
+     * @throws IllegalStateException
+     *             if the relevant counter would overflow
+     */
+    public void recordIncidentStart(TrafficEventType type)
+    {
+        if (type == null || type == TrafficEventType.NONE)
+        {
+            throw new IllegalArgumentException(
+                "An incident must be ACCIDENT or SLOWDOWN.");
+        }
+
+        if (type == TrafficEventType.ACCIDENT)
+        {
+            if (totalAccidents == Integer.MAX_VALUE)
+            {
+                throw new IllegalStateException("Accident count overflow.");
+            }
+            totalAccidents++;
+        }
+        else if (type == TrafficEventType.SLOWDOWN)
+        {
+            if (totalSlowdowns == Integer.MAX_VALUE)
+            {
+                throw new IllegalStateException("Slowdown count overflow.");
+            }
+            totalSlowdowns++;
+        }
+    }
+
+
+    /**
+     * Samples all four waiting queues once. Validates the complete lane map
+     * before updating any statistics. Crossing vehicles are not included.
      *
      * @param lanes
-     *            map containing all four lanes
+     *            map containing one matching Lane for every Direction
      * @throws IllegalArgumentException
-     *             if the map contains missing, null, or mismatched lanes
+     *             if a lane is missing, null, or mismatched
      * @throws IllegalStateException
      *             if the sample counter would overflow
      */
@@ -128,15 +201,13 @@ public class StatisticsAccumulator
             throw new IllegalArgumentException("Provide exactly four lanes.");
         }
 
-        // Validate every lane before modifying statistics.
         for (Direction direction : Direction.values())
         {
             Lane lane = lanes.get(direction);
-
             if (lane == null || lane.getApproach() != direction)
             {
                 throw new IllegalArgumentException(
-                    "Invalid lane for " + direction);
+                    "Invalid lane for " + direction + ".");
             }
         }
 
@@ -145,27 +216,21 @@ public class StatisticsAccumulator
             throw new IllegalStateException("Too many queue samples.");
         }
 
-        // Record current and maximum queue lengths.
         for (Direction direction : Direction.values())
         {
             int length = lanes.get(direction).getQueueLength();
-
             queueLengthSums
                 .put(direction, queueLengthSums.get(direction) + length);
-
             maximumQueueLengths.put(
                 direction,
                 Math.max(maximumQueueLengths.get(direction), length));
         }
-
         queueSampleCount++;
     }
 
 
     /**
-     * Returns the total number of generated vehicles.
-     *
-     * @return total vehicle arrivals
+     * @return total arrivals, including emergency vehicles
      */
     public int getTotalArrived()
     {
@@ -174,10 +239,16 @@ public class StatisticsAccumulator
 
 
     /**
-     * Returns the total number of vehicles that have finished crossing the
-     * intersection.
-     *
-     * @return total completed vehicles
+     * @return total emergency vehicles generated
+     */
+    public int getTotalEmergencyArrived()
+    {
+        return totalEmergencyArrived;
+    }
+
+
+    /**
+     * @return total completed vehicles, including emergency vehicles
      */
     public int getTotalCompleted()
     {
@@ -186,9 +257,16 @@ public class StatisticsAccumulator
 
 
     /**
-     * Returns the combined waiting time of all completed vehicles.
-     *
-     * @return total waiting time in seconds
+     * @return total completed emergency vehicles
+     */
+    public int getTotalEmergencyCompleted()
+    {
+        return totalEmergencyCompleted;
+    }
+
+
+    /**
+     * @return sum of all completed vehicle queue waiting times, in seconds
      */
     public long getTotalWaitingSecondsCompleted()
     {
@@ -197,12 +275,19 @@ public class StatisticsAccumulator
 
 
     /**
-     * Calculates the average waiting time of vehicles that completed the
-     * intersection. Vehicles still waiting or crossing are excluded from this
-     * average.
+     * @return sum of completed emergency vehicle waiting times, in seconds
+     */
+    public long getTotalEmergencyWaitingSecondsCompleted()
+    {
+        return totalEmergencyWaitingSecondsCompleted;
+    }
+
+
+    /**
+     * Returns the average queue waiting time among all completed vehicles.
+     * Waiting and crossing vehicles are excluded.
      *
-     * @return average waiting time in seconds, or null if no vehicles have
-     *             completed
+     * @return average seconds waited, or null if no vehicles completed
      */
     public Double getAverageWaitingTimeSeconds()
     {
@@ -210,15 +295,47 @@ public class StatisticsAccumulator
         {
             return null;
         }
-
         return (double)totalWaitingSecondsCompleted / totalCompleted;
     }
 
 
     /**
-     * Returns the number of queue samples collected.
+     * Returns the average waiting time among completed emergency vehicles.
+     * Emergency vehicles still waiting or crossing are excluded.
      *
-     * @return total queue samples
+     * @return average emergency wait in seconds, or null if none completed
+     */
+    public Double getAverageEmergencyWaitingTimeSeconds()
+    {
+        if (totalEmergencyCompleted == 0)
+        {
+            return null;
+        }
+        return (double)totalEmergencyWaitingSecondsCompleted
+            / totalEmergencyCompleted;
+    }
+
+
+    /**
+     * @return number of accidents started during the simulation
+     */
+    public int getTotalAccidents()
+    {
+        return totalAccidents;
+    }
+
+
+    /**
+     * @return number of slowdowns started during the simulation
+     */
+    public int getTotalSlowdowns()
+    {
+        return totalSlowdowns;
+    }
+
+
+    /**
+     * @return number of full four-direction queue samples recorded
      */
     public int getQueueSampleCount()
     {
@@ -227,59 +344,50 @@ public class StatisticsAccumulator
 
 
     /**
-     * Calculates the average queue length for a specified incoming direction.
+     * Returns the average number of queued vehicles at a given approach.
      *
      * @param direction
-     *            incoming traffic direction
-     * @return average number of waiting vehicles, or zero if no samples have
-     *             been taken
+     *            incoming approach to inspect
+     * @return mean sampled queue length, or 0.0 before the first sample
      * @throws IllegalArgumentException
      *             if direction is null
      */
     public double getAverageQueueLength(Direction direction)
     {
-
         validateDirection(direction);
-
         if (queueSampleCount == 0)
         {
             return 0.0;
         }
-
         return (double)queueLengthSums.get(direction) / queueSampleCount;
     }
 
 
     /**
-     * Returns the largest observed queue length for a specified incoming
-     * direction.
+     * Returns the greatest sampled waiting queue length for an approach.
      *
      * @param direction
-     *            incoming traffic direction
-     * @return maximum number of queued vehicles, or zero if no samples have
-     *             been taken
+     *            incoming approach to inspect
+     * @return maximum sampled queue length, or zero before any samples
      * @throws IllegalArgumentException
      *             if direction is null
      */
     public int getMaximumQueueLength(Direction direction)
     {
-
         validateDirection(direction);
-
         return maximumQueueLengths.get(direction);
     }
 
 
     /**
-     * Validates an incoming direction before accessing direction-indexed
-     * statistics.
+     * Validates an incoming approach used to index queue statistics.
      *
      * @param direction
-     *            direction to validate
+     *            approach to validate
      * @throws IllegalArgumentException
      *             if direction is null
      */
-    private void validateDirection(Direction direction)
+    private static void validateDirection(Direction direction)
     {
         if (direction == null)
         {

@@ -1,434 +1,714 @@
-package defaultPackage;
 
-import static org.junit.Assert.*;
-import org.junit.Before;
-import org.junit.Test;
+package defaultPackage;
 
 import static org.junit.Assert.*;
 
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Random;
 import org.junit.Test;
 
 /**
- * JUnit 4 tests for StatisticsAccumulator. Verifies vehicle counts, waiting
- * times, queue statistics, and invalid input handling without relying on the
- * controller or terminal view.
+ * JUnit 4 tests for V2 statistics, emergency metrics, incident counts,
+ * waiting-time calculations, queue samples, and bad-input handling.
  */
 public class StatisticsAccumulatorTest
 {
 
     /**
-     * Creates an empty Lane for each incoming approach.
-     *
-     * @return map containing all four lane objects
-     */
-    private Map<Direction, Lane> createLanes()
-    {
-        Map<Direction, Lane> lanes = new EnumMap<>(Direction.class);
-
-        for (Direction direction : Direction.values())
-        {
-            lanes.put(direction, new Lane(direction, 0, 0, 0));
-        }
-
-        return lanes;
-    }
-
-
-    /**
-     * Creates a vehicle that has completed its crossing.
+     * Creates a vehicle that has entered and finished crossing.
      *
      * @param id
      *            unique vehicle identifier
-     * @param arrived
-     *            vehicle arrival second
-     * @param released
+     * @param type
+     *            vehicle classification
+     * @param arrival
+     *            arrival second
+     * @param crossing
      *            crossing start second
-     * @return completed vehicle with known waiting time
+     * @return vehicle in DONE state
      */
-    private Vehicle completedVehicle(long id, int arrived, int released)
+    private
+        Vehicle
+        completed(long id, VehicleType type, int arrival, int crossing)
     {
-
         Vehicle vehicle =
-            new Vehicle(id, Direction.NORTH, Turn.STRAIGHT, arrived);
-
-        vehicle.startCrossing(released);
-        vehicle.advance(20);
+            new Vehicle(id, Direction.NORTH, Turn.STRAIGHT, arrival, type);
+        vehicle.startCrossing(crossing);
         vehicle.finishCrossing();
-
         return vehicle;
     }
 
 
     /**
-     * Verifies that an operation throws IllegalArgumentException.
+     * Builds four valid V2 lanes with independently seeded random sources.
+     *
+     * @param north
+     *            northbound arrival rate
+     * @param south
+     *            southbound arrival rate
+     * @param east
+     *            eastbound arrival rate
+     * @param west
+     *            westbound arrival rate
+     * @return map containing one matching lane for every direction
+     */
+    private Map<Direction, Lane> lanes(int north, int south, int east, int west)
+    {
+        int[] rates = { north, south, east, west };
+        EnumMap<Direction, Lane> result = new EnumMap<>(Direction.class);
+        for (Direction direction : Direction.values())
+        {
+            int index = direction.ordinal();
+            result.put(
+                direction,
+                new Lane(
+                    direction,
+                    rates[index],
+                    0,
+                    0,
+                    0,
+                    new Random(11L + index),
+                    new Random(71L + index)));
+        }
+        return result;
+    }
+
+
+    /**
+     * Generates consecutive arrival steps for all four lanes.
+     *
+     * @param lanes
+     *            map to advance
+     * @param seconds
+     *            number of steps beginning at second zero
+     */
+    private void generate(Map<Direction, Lane> lanes, int seconds)
+    {
+        for (int second = 0; second < seconds; second++)
+        {
+            for (Direction direction : Direction.values())
+            {
+                long id = direction.ordinal() * 100000L + second * 2L + 1L;
+                lanes.get(direction).generateArrivals(second, id);
+            }
+        }
+    }
+
+
+    /**
+     * Confirms that an operation rejects invalid arguments.
      *
      * @param action
-     *            operation expected to fail
+     *            operation expected to throw IllegalArgumentException
      */
     private void assertInvalid(Runnable action)
     {
         try
         {
             action.run();
-            fail("Expected IllegalArgumentException");
+            fail("Expected IllegalArgumentException.");
         }
         catch (IllegalArgumentException expected)
         {
-            // Expected exception.
+            // Expected invalid input.
         }
     }
 
 
     /**
-     * Verifies that an operation throws IllegalStateException.
+     * Confirms that an operation rejects an invalid simulator state.
      *
      * @param action
-     *            operation expected to fail
+     *            operation expected to throw IllegalStateException
      */
-    private void assertBadState(Runnable action)
+    private void assertIllegalState(Runnable action)
     {
         try
         {
             action.run();
-            fail("Expected IllegalStateException");
+            fail("Expected IllegalStateException.");
         }
         catch (IllegalStateException expected)
         {
-            // Expected exception.
+            // Expected invalid state.
         }
     }
 
 
     /**
-     * Tests that the constructor initializes all statistics to zero and average
-     * wait to null.
+     * Verifies initial totals, both nullable averages, and zero queue stats.
      */
     @Test
-    public void testConstructor()
+    public void testInitialState()
     {
         StatisticsAccumulator stats = new StatisticsAccumulator();
-
         assertEquals(0, stats.getTotalArrived());
+        assertEquals(0, stats.getTotalEmergencyArrived());
         assertEquals(0, stats.getTotalCompleted());
+        assertEquals(0, stats.getTotalEmergencyCompleted());
         assertEquals(0L, stats.getTotalWaitingSecondsCompleted());
-        assertEquals(0, stats.getQueueSampleCount());
+        assertEquals(0L, stats.getTotalEmergencyWaitingSecondsCompleted());
         assertNull(stats.getAverageWaitingTimeSeconds());
-
+        assertNull(stats.getAverageEmergencyWaitingTimeSeconds());
+        assertEquals(0, stats.getTotalAccidents());
+        assertEquals(0, stats.getTotalSlowdowns());
+        assertEquals(0, stats.getQueueSampleCount());
         for (Direction direction : Direction.values())
         {
-            assertEquals(0.0, stats.getAverageQueueLength(direction), 0.0001);
-
+            assertEquals(0.0, stats.getAverageQueueLength(direction), 0.0);
             assertEquals(0, stats.getMaximumQueueLength(direction));
         }
     }
 
 
     /**
-     * Tests recording several batches of arriving vehicles, including a batch
-     * of zero.
+     * Tests zero arrivals and separately accumulated normal/emergency batches.
      */
     @Test
-    public void testRecordArrivals()
+    public void testArrivalBatches()
     {
         StatisticsAccumulator stats = new StatisticsAccumulator();
-
-        stats.recordArrivals(3);
-        stats.recordArrivals(0);
-        stats.recordArrivals(2);
-
-        assertEquals(5, stats.getTotalArrived());
+        stats.recordArrivals(0, 0);
+        stats.recordArrivals(10, 2);
+        stats.recordArrivals(3, 3);
+        stats.recordArrivals(5, 0);
+        assertEquals(18, stats.getTotalArrived());
+        assertEquals(5, stats.getTotalEmergencyArrived());
         assertEquals(0, stats.getTotalCompleted());
     }
 
 
     /**
-     * Tests rejection of a negative arrival count without modifying existing
-     * statistics.
+     * Rejects negative total or emergency arrival counts without mutation.
      */
     @Test
-    public void testNegativeArrivalCount()
+    public void testNegativeArrivalCountsRejected()
     {
         StatisticsAccumulator stats = new StatisticsAccumulator();
-
-        stats.recordArrivals(2);
-
-        assertInvalid(() -> stats.recordArrivals(-1));
-
-        assertEquals(2, stats.getTotalArrived());
-    }
-
-
-    /**
-     * Tests that an arrival count causing integer overflow is rejected.
-     */
-    @Test
-    public void testArrivalOverflow()
-    {
-        StatisticsAccumulator stats = new StatisticsAccumulator();
-
-        stats.recordArrivals(Integer.MAX_VALUE);
-
-        assertInvalid(() -> stats.recordArrivals(1));
-
-        assertEquals(Integer.MAX_VALUE, stats.getTotalArrived());
-    }
-
-
-    /**
-     * Tests recording a completed vehicle and its queue waiting time.
-     */
-    @Test
-    public void testRecordCompletion()
-    {
-        StatisticsAccumulator stats = new StatisticsAccumulator();
-
-        stats.recordArrivals(1);
-        stats.recordCompletion(completedVehicle(1, 5, 12));
-
-        assertEquals(1, stats.getTotalCompleted());
-        assertEquals(7L, stats.getTotalWaitingSecondsCompleted());
-
-        assertEquals(7.0, stats.getAverageWaitingTimeSeconds(), 0.0001);
-    }
-
-
-    /**
-     * Tests average waiting time across multiple completed vehicles. Vehicles
-     * that have arrived but not completed must not contribute to the average.
-     */
-    @Test
-    public void testAverageWait()
-    {
-        StatisticsAccumulator stats = new StatisticsAccumulator();
-
-        stats.recordArrivals(3);
-
-        stats.recordCompletion(completedVehicle(1, 5, 12));
-
-        stats.recordCompletion(completedVehicle(2, 7, 10));
-
-        assertEquals(2, stats.getTotalCompleted());
-        assertEquals(10L, stats.getTotalWaitingSecondsCompleted());
-
-        assertEquals(5.0, stats.getAverageWaitingTimeSeconds(), 0.0001);
-
+        stats.recordArrivals(3, 1);
+        assertInvalid(() -> stats.recordArrivals(-1, 0));
+        assertInvalid(() -> stats.recordArrivals(1, -1));
+        assertInvalid(() -> stats.recordArrivals(-1, -1));
         assertEquals(3, stats.getTotalArrived());
+        assertEquals(1, stats.getTotalEmergencyArrived());
     }
 
 
     /**
-     * Tests that average waiting time remains undefined when no vehicles have
-     * completed.
+     * Rejects emergency counts greater than the containing arrival batch.
      */
     @Test
-    public void testNoCompletedVehicles()
+    public void testEmergencyCountCannotExceedBatch()
     {
         StatisticsAccumulator stats = new StatisticsAccumulator();
-
-        stats.recordArrivals(10);
-
-        assertNull(stats.getAverageWaitingTimeSeconds());
+        assertInvalid(() -> stats.recordArrivals(0, 1));
+        assertInvalid(() -> stats.recordArrivals(2, 3));
+        assertEquals(0, stats.getTotalArrived());
+        assertEquals(0, stats.getTotalEmergencyArrived());
     }
 
 
     /**
-     * Tests rejection of a null vehicle without changing the completed vehicle
-     * count.
+     * Rejects integer arrival overflow while preserving prior totals.
      */
     @Test
-    public void testNullCompletion()
+    public void testArrivalOverflowRejectedWithoutMutation()
     {
         StatisticsAccumulator stats = new StatisticsAccumulator();
+        stats.recordArrivals(Integer.MAX_VALUE - 1, Integer.MAX_VALUE - 1);
+        assertInvalid(() -> stats.recordArrivals(2, 0));
+        assertEquals(Integer.MAX_VALUE - 1, stats.getTotalArrived());
+        stats.recordArrivals(1, 0);
+        assertEquals(Integer.MAX_VALUE, stats.getTotalArrived());
+        assertEquals(Integer.MAX_VALUE - 1, stats.getTotalEmergencyArrived());
+        assertInvalid(() -> stats.recordArrivals(1, 0));
+    }
 
-        stats.recordArrivals(1);
 
+    /**
+     * Counts an ordinary vehicle completion and its queue waiting time.
+     */
+    @Test
+    public void testNormalCompletion()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        stats.recordArrivals(1, 0);
+        stats.recordCompletion(completed(1, VehicleType.NORMAL, 4, 9));
+        assertEquals(1, stats.getTotalCompleted());
+        assertEquals(0, stats.getTotalEmergencyCompleted());
+        assertEquals(5L, stats.getTotalWaitingSecondsCompleted());
+        assertEquals(0L, stats.getTotalEmergencyWaitingSecondsCompleted());
+        assertEquals(5.0, stats.getAverageWaitingTimeSeconds(), 0.000001);
+        assertNull(stats.getAverageEmergencyWaitingTimeSeconds());
+    }
+
+
+    /**
+     * Counts an emergency completion in both general and emergency metrics.
+     */
+    @Test
+    public void testEmergencyCompletion()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        stats.recordArrivals(1, 1);
+        stats.recordCompletion(completed(10, VehicleType.EMERGENCY, 5, 12));
+        assertEquals(1, stats.getTotalCompleted());
+        assertEquals(1, stats.getTotalEmergencyCompleted());
+        assertEquals(7L, stats.getTotalWaitingSecondsCompleted());
+        assertEquals(7L, stats.getTotalEmergencyWaitingSecondsCompleted());
+        assertEquals(
+            7.0,
+            stats.getAverageEmergencyWaitingTimeSeconds(),
+            0.000001);
+    }
+
+
+    /**
+     * Verifies overall and emergency waiting-time averages are different.
+     */
+    @Test
+    public void testMixedVehicleWaitingTimeAverages()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        stats.recordArrivals(5, 2);
+        stats.recordCompletion(completed(1, VehicleType.NORMAL, 0, 2));
+        stats.recordCompletion(completed(2, VehicleType.EMERGENCY, 0, 8));
+        stats.recordCompletion(completed(3, VehicleType.NORMAL, 0, 4));
+        stats.recordCompletion(completed(4, VehicleType.EMERGENCY, 0, 12));
+        assertEquals(5, stats.getTotalArrived());
+        assertEquals(4, stats.getTotalCompleted());
+        assertEquals(2, stats.getTotalEmergencyCompleted());
+        assertEquals(26L, stats.getTotalWaitingSecondsCompleted());
+        assertEquals(20L, stats.getTotalEmergencyWaitingSecondsCompleted());
+        assertEquals(6.5, stats.getAverageWaitingTimeSeconds(), 0.000001);
+        assertEquals(
+            10.0,
+            stats.getAverageEmergencyWaitingTimeSeconds(),
+            0.000001);
+    }
+
+
+    /**
+     * Confirms entering the intersection upon arrival gives zero waiting time.
+     */
+    @Test
+    public void testZeroWaitingTimeCompletion()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        stats.recordArrivals(1, 1);
+        stats.recordCompletion(completed(1, VehicleType.EMERGENCY, 20, 20));
+        assertEquals(0L, stats.getTotalWaitingSecondsCompleted());
+        assertEquals(0.0, stats.getAverageWaitingTimeSeconds(), 0.0);
+        assertEquals(0.0, stats.getAverageEmergencyWaitingTimeSeconds(), 0.0);
+    }
+
+
+    /**
+     * Confirms large waiting-time totals use long rather than int arithmetic.
+     */
+    @Test
+    public void testWaitingTimesAccumulateInLong()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        stats.recordArrivals(2, 1);
+        stats.recordCompletion(
+            completed(1, VehicleType.NORMAL, 0, Integer.MAX_VALUE));
+        stats.recordCompletion(
+            completed(2, VehicleType.EMERGENCY, 0, Integer.MAX_VALUE));
+        assertEquals(
+            2L * Integer.MAX_VALUE,
+            stats.getTotalWaitingSecondsCompleted());
+        assertEquals(
+            (long)Integer.MAX_VALUE,
+            stats.getTotalEmergencyWaitingSecondsCompleted());
+        assertEquals(
+            (double)Integer.MAX_VALUE,
+            stats.getAverageWaitingTimeSeconds(),
+            0.0);
+    }
+
+
+    /**
+     * Rejects null completed vehicles.
+     */
+    @Test
+    public void testNullCompletionRejected()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        stats.recordArrivals(1, 0);
         assertInvalid(() -> stats.recordCompletion(null));
-
         assertEquals(0, stats.getTotalCompleted());
     }
 
 
     /**
-     * Tests that WAITING and CROSSING vehicles cannot be recorded as completed.
+     * Rejects a WAITING vehicle without incrementing completion counters.
      */
     @Test
-    public void testUnfinishedCompletion()
+    public void testWaitingVehicleCompletionRejected()
     {
         StatisticsAccumulator stats = new StatisticsAccumulator();
-
-        stats.recordArrivals(1);
-
-        Vehicle vehicle = new Vehicle(1, Direction.NORTH, Turn.STRAIGHT, 0);
-
-        assertBadState(() -> stats.recordCompletion(vehicle));
-
-        vehicle.startCrossing(4);
-
-        assertBadState(() -> stats.recordCompletion(vehicle));
-
-        vehicle.advance(20);
-        vehicle.finishCrossing();
-
-        stats.recordCompletion(vehicle);
-
-        assertEquals(1, stats.getTotalCompleted());
+        stats.recordArrivals(1, 0);
+        Vehicle waiting = new Vehicle(
+            1,
+            Direction.NORTH,
+            Turn.STRAIGHT,
+            0,
+            VehicleType.NORMAL);
+        assertIllegalState(() -> stats.recordCompletion(waiting));
+        assertEquals(0, stats.getTotalCompleted());
     }
 
 
     /**
-     * Tests that the same vehicle cannot be counted as completed more than
-     * once.
+     * Rejects a CROSSING vehicle that has not yet reached DONE state.
      */
     @Test
-    public void testDuplicateCompletion()
+    public void testCrossingVehicleCompletionRejected()
     {
         StatisticsAccumulator stats = new StatisticsAccumulator();
+        stats.recordArrivals(1, 1);
+        Vehicle crossing = new Vehicle(
+            1,
+            Direction.SOUTH,
+            Turn.LEFT,
+            0,
+            VehicleType.EMERGENCY);
+        crossing.startCrossing(5);
+        assertIllegalState(() -> stats.recordCompletion(crossing));
+        assertEquals(0, stats.getTotalCompleted());
+        assertEquals(0, stats.getTotalEmergencyCompleted());
+    }
 
-        stats.recordArrivals(2);
 
-        Vehicle vehicle = completedVehicle(1, 0, 3);
-
+    /**
+     * Rejects counting the same completed vehicle more than once.
+     */
+    @Test
+    public void testDuplicateVehicleCompletionRejected()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        stats.recordArrivals(2, 0);
+        Vehicle vehicle = completed(1, VehicleType.NORMAL, 0, 3);
         stats.recordCompletion(vehicle);
-
         assertInvalid(() -> stats.recordCompletion(vehicle));
-
         assertEquals(1, stats.getTotalCompleted());
-
         assertEquals(3L, stats.getTotalWaitingSecondsCompleted());
     }
 
 
     /**
-     * Tests that a completed vehicle cannot be recorded without a corresponding
-     * arrival.
+     * Rejects a second distinct Vehicle object sharing a completed ID.
      */
     @Test
-    public void testCompletionWithoutArrival()
+    public void testDuplicateVehicleIdRejected()
     {
         StatisticsAccumulator stats = new StatisticsAccumulator();
-
-        assertBadState(() -> stats.recordCompletion(completedVehicle(1, 0, 1)));
-
-        assertEquals(0, stats.getTotalCompleted());
+        stats.recordArrivals(2, 0);
+        stats.recordCompletion(completed(5, VehicleType.NORMAL, 0, 3));
+        assertInvalid(
+            () -> stats
+                .recordCompletion(completed(5, VehicleType.NORMAL, 0, 9)));
+        assertEquals(1, stats.getTotalCompleted());
+        assertEquals(3L, stats.getTotalWaitingSecondsCompleted());
     }
 
 
     /**
-     * Tests sampling of four completely empty lane queues over multiple
-     * simulation steps.
+     * Rejects completions when no more arrivals have been recorded.
      */
     @Test
-    public void testEmptyQueueSamples()
+    public void testCompletionCannotExceedTotalArrivals()
     {
         StatisticsAccumulator stats = new StatisticsAccumulator();
+        assertIllegalState(
+            () -> stats
+                .recordCompletion(completed(1, VehicleType.NORMAL, 0, 1)));
+        stats.recordArrivals(1, 0);
+        stats.recordCompletion(completed(1, VehicleType.NORMAL, 0, 1));
+        assertIllegalState(
+            () -> stats
+                .recordCompletion(completed(2, VehicleType.NORMAL, 0, 2)));
+        assertEquals(1, stats.getTotalCompleted());
+    }
 
-        Map<Direction, Lane> lanes = createLanes();
 
-        stats.sampleQueues(lanes);
-        stats.sampleQueues(lanes);
+    /**
+     * Rejects emergency completions beyond the recorded emergency arrivals.
+     */
+    @Test
+    public void testEmergencyCompletionCannotExceedEmergencyArrivals()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        stats.recordArrivals(2, 1);
+        stats.recordCompletion(completed(1, VehicleType.EMERGENCY, 0, 5));
+        assertIllegalState(
+            () -> stats
+                .recordCompletion(completed(2, VehicleType.EMERGENCY, 0, 10)));
+        assertEquals(1, stats.getTotalCompleted());
+        assertEquals(1, stats.getTotalEmergencyCompleted());
+        assertEquals(5L, stats.getTotalWaitingSecondsCompleted());
+    }
 
-        assertEquals(2, stats.getQueueSampleCount());
 
+    /**
+     * Rejects ordinary completions when all recorded arrivals are emergency.
+     */
+    @Test
+    public void testNormalCompletionCannotExceedNormalArrivals()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        stats.recordArrivals(2, 2);
+        assertIllegalState(
+            () -> stats
+                .recordCompletion(completed(1, VehicleType.NORMAL, 0, 5)));
+        assertEquals(0, stats.getTotalCompleted());
+        stats.recordCompletion(completed(2, VehicleType.EMERGENCY, 0, 8));
+        assertEquals(1, stats.getTotalCompleted());
+    }
+
+
+    /**
+     * Tests a previously rejected completion can succeed after valid arrivals
+     * are recorded, demonstrating failure does not consume the vehicle ID.
+     */
+    @Test
+    public void testFailedCompletionDoesNotConsumeVehicleId()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        Vehicle emergency = completed(5, VehicleType.EMERGENCY, 0, 7);
+        stats.recordArrivals(1, 0);
+        assertIllegalState(() -> stats.recordCompletion(emergency));
+        stats.recordArrivals(1, 1);
+        stats.recordCompletion(emergency);
+        assertEquals(1, stats.getTotalEmergencyCompleted());
+        assertEquals(7L, stats.getTotalWaitingSecondsCompleted());
+    }
+
+
+    /**
+     * Tracks started accidents and slowdowns independently of one another.
+     */
+    @Test
+    public void testIncidentStartCounts()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        stats.recordIncidentStart(TrafficEventType.ACCIDENT);
+        stats.recordIncidentStart(TrafficEventType.SLOWDOWN);
+        stats.recordIncidentStart(TrafficEventType.ACCIDENT);
+        assertEquals(2, stats.getTotalAccidents());
+        assertEquals(1, stats.getTotalSlowdowns());
+    }
+
+
+    /**
+     * Rejects null or NONE as a genuine incident without changing counters.
+     */
+    @Test
+    public void testInvalidIncidentTypesRejected()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        assertInvalid(() -> stats.recordIncidentStart(null));
+        assertInvalid(() -> stats.recordIncidentStart(TrafficEventType.NONE));
+        assertEquals(0, stats.getTotalAccidents());
+        assertEquals(0, stats.getTotalSlowdowns());
+    }
+
+
+    /**
+     * Verifies incident counts never modify arrival or completion totals.
+     */
+    @Test
+    public void testIncidentsDoNotModifyVehicleStatistics()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        stats.recordArrivals(2, 1);
+        stats.recordIncidentStart(TrafficEventType.ACCIDENT);
+        stats.recordIncidentStart(TrafficEventType.SLOWDOWN);
+        assertEquals(2, stats.getTotalArrived());
+        assertEquals(1, stats.getTotalEmergencyArrived());
+        assertEquals(0, stats.getTotalCompleted());
+        assertNull(stats.getAverageWaitingTimeSeconds());
+    }
+
+
+    /**
+     * Records an empty four-lane sample without introducing false queues.
+     */
+    @Test
+    public void testEmptyLanesSampleAsZero()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        stats.sampleQueues(lanes(0, 0, 0, 0));
+        assertEquals(1, stats.getQueueSampleCount());
         for (Direction direction : Direction.values())
         {
-            assertEquals(0.0, stats.getAverageQueueLength(direction), 0.0001);
-
+            assertEquals(0.0, stats.getAverageQueueLength(direction), 0.0);
             assertEquals(0, stats.getMaximumQueueLength(direction));
         }
     }
 
 
     /**
-     * Tests average and maximum queue sizes using actual vehicles in a Lane's
-     * LinkedQueue. Three vehicles are queued for the first sample; one is
-     * released before the second sample.
+     * Verifies averages and maxima across two different queue observations.
      */
     @Test
-    public void testNonemptyQueueSamples()
+    public void testQueueAveragesAndMaxima()
     {
+        Map<Direction, Lane> four = lanes(1800, 1800, 0, 0);
+        generate(four, 8);
         StatisticsAccumulator stats = new StatisticsAccumulator();
+        stats.sampleQueues(four);
+        assertEquals(4, four.get(Direction.NORTH).getQueueLength());
+        assertEquals(4, four.get(Direction.SOUTH).getQueueLength());
 
-        Map<Direction, Lane> lanes = createLanes();
-
-        Lane north = new Lane(Direction.NORTH, 1800, 0, 0);
-
-        lanes.put(Direction.NORTH, north);
-
-        long nextId = 1L;
-
-        // Generate three arrivals in six steps.
-        for (int second = 0; second < 6; second++)
-        {
-            int created = north.generateArrivals(second, nextId);
-
-            nextId += created;
-        }
-
-        assertEquals(3, north.getQueueLength());
-
-        // First sample: north queue length = 3.
-        stats.sampleQueues(lanes);
-
-        Vehicle released = north.releaseNext(6, true);
-        assertNotNull(released);
-
-        // Second sample: north queue length = 2.
-        stats.sampleQueues(lanes);
+        four.get(Direction.NORTH).releaseNext(8, true, 2);
+        four.get(Direction.NORTH).releaseNext(10, true, 2);
+        four.get(Direction.SOUTH).releaseNext(8, true, 2);
+        stats.sampleQueues(four);
 
         assertEquals(2, stats.getQueueSampleCount());
-
-        assertEquals(2.5, stats.getAverageQueueLength(Direction.NORTH), 0.0001);
-
-        assertEquals(3, stats.getMaximumQueueLength(Direction.NORTH));
-
-        assertEquals(0.0, stats.getAverageQueueLength(Direction.SOUTH), 0.0001);
-
-        assertEquals(0, stats.getMaximumQueueLength(Direction.SOUTH));
+        assertEquals(3.0, stats.getAverageQueueLength(Direction.NORTH), 0.0);
+        assertEquals(3.5, stats.getAverageQueueLength(Direction.SOUTH), 0.0);
+        assertEquals(0.0, stats.getAverageQueueLength(Direction.EAST), 0.0);
+        assertEquals(0.0, stats.getAverageQueueLength(Direction.WEST), 0.0);
+        assertEquals(4, stats.getMaximumQueueLength(Direction.NORTH));
+        assertEquals(4, stats.getMaximumQueueLength(Direction.SOUTH));
+        assertEquals(0, stats.getMaximumQueueLength(Direction.EAST));
+        assertEquals(0, stats.getMaximumQueueLength(Direction.WEST));
     }
 
 
     /**
-     * Tests rejection of null, incomplete, and mismatched lane maps. Invalid
-     * samples must not change statistics.
+     * Confirms queue sampling excludes vehicles already released to CROSSING.
      */
     @Test
-    public void testInvalidQueueSampleMap()
+    public void testQueueSamplesExcludeCrossingVehicles()
+    {
+        Map<Direction, Lane> four = lanes(1800, 0, 0, 0);
+        generate(four, 4);
+        assertEquals(2, four.get(Direction.NORTH).getQueueLength());
+        assertEquals(
+            VehicleState.CROSSING,
+            four.get(Direction.NORTH).releaseNext(4, true, 2).getState());
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        stats.sampleQueues(four);
+        assertEquals(1.0, stats.getAverageQueueLength(Direction.NORTH), 0.0);
+        assertEquals(1, stats.getMaximumQueueLength(Direction.NORTH));
+    }
+
+
+    /**
+     * Rejects a null map of lanes.
+     */
+    @Test
+    public void testNullQueueSampleMapRejected()
     {
         StatisticsAccumulator stats = new StatisticsAccumulator();
-
         assertInvalid(() -> stats.sampleQueues(null));
-
-        Map<Direction, Lane> lanes = createLanes();
-
-        lanes.remove(Direction.WEST);
-
-        assertInvalid(() -> stats.sampleQueues(lanes));
-
-        lanes.put(Direction.WEST, null);
-
-        assertInvalid(() -> stats.sampleQueues(lanes));
-
-        lanes.put(Direction.WEST, new Lane(Direction.NORTH, 0, 0, 0));
-
-        assertInvalid(() -> stats.sampleQueues(lanes));
-
         assertEquals(0, stats.getQueueSampleCount());
     }
 
 
     /**
-     * Tests that null directions are rejected by queue-statistics getter
-     * methods.
+     * Rejects an incomplete lane map.
      */
     @Test
-    public void testNullDirectionQueries()
+    public void testMissingLaneRejected()
     {
         StatisticsAccumulator stats = new StatisticsAccumulator();
+        Map<Direction, Lane> four = lanes(0, 0, 0, 0);
+        four.remove(Direction.WEST);
+        assertInvalid(() -> stats.sampleQueues(four));
+        assertEquals(0, stats.getQueueSampleCount());
+    }
 
+
+    /**
+     * Rejects a map with a null lane value.
+     */
+    @Test
+    public void testNullLaneRejected()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        Map<Direction, Lane> four = lanes(0, 0, 0, 0);
+        four.put(Direction.EAST, null);
+        assertInvalid(() -> stats.sampleQueues(four));
+        assertEquals(0, stats.getQueueSampleCount());
+    }
+
+
+    /**
+     * Rejects a map containing a lane keyed under the wrong direction.
+     */
+    @Test
+    public void testMismatchedLaneRejected()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        Map<Direction, Lane> four = lanes(0, 0, 0, 0);
+        four.put(Direction.NORTH, four.get(Direction.SOUTH));
+        assertInvalid(() -> stats.sampleQueues(four));
+        assertEquals(0, stats.getQueueSampleCount());
+    }
+
+
+    /**
+     * Rejects an extra null map key even if all four directions are present.
+     */
+    @Test
+    public void testExtraLaneKeyRejected()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        Map<Direction, Lane> extra = new HashMap<>(lanes(0, 0, 0, 0));
+        extra.put(null, extra.get(Direction.NORTH));
+        assertInvalid(() -> stats.sampleQueues(extra));
+        assertEquals(0, stats.getQueueSampleCount());
+    }
+
+
+    /**
+     * Rejects malformed samples without changing previously accumulated data.
+     */
+    @Test
+    public void testInvalidSampleDoesNotCorruptPriorStatistics()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        Map<Direction, Lane> four = lanes(1800, 0, 0, 0);
+        generate(four, 4);
+        stats.sampleQueues(four);
+        four.put(Direction.WEST, four.get(Direction.NORTH));
+        assertInvalid(() -> stats.sampleQueues(four));
+        assertEquals(1, stats.getQueueSampleCount());
+        assertEquals(2.0, stats.getAverageQueueLength(Direction.NORTH), 0.0);
+        assertEquals(2, stats.getMaximumQueueLength(Direction.NORTH));
+    }
+
+
+    /**
+     * Rejects null directions for both queue statistics getters.
+     */
+    @Test
+    public void testNullDirectionQueriesRejected()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
         assertInvalid(() -> stats.getAverageQueueLength(null));
-
         assertInvalid(() -> stats.getMaximumQueueLength(null));
+    }
+
+
+    /**
+     * Verifies queue samples and vehicle counts are independently collected.
+     */
+    @Test
+    public void testQueueSamplingDoesNotChangeVehicleTotals()
+    {
+        StatisticsAccumulator stats = new StatisticsAccumulator();
+        stats.recordArrivals(5, 2);
+        stats.sampleQueues(lanes(0, 0, 0, 0));
+        assertEquals(5, stats.getTotalArrived());
+        assertEquals(2, stats.getTotalEmergencyArrived());
+        assertEquals(0, stats.getTotalCompleted());
     }
 }
