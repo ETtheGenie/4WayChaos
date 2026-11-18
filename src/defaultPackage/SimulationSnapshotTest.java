@@ -1,451 +1,1053 @@
+
 package defaultPackage;
 
 import static org.junit.Assert.*;
-import org.junit.Before;
-import org.junit.Test;
 
-import static org.junit.Assert.*;
-
+import java.util.Collections;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.Map;
 import org.junit.Test;
 
 /**
- * JUnit 4 tests for SimulationSnapshot. Verifies snapshot creation, vehicle
- * conservation, immutability, and invalid input handling.
+ * JUnit 4 tests for immutable V2 snapshots, adaptive signal state, emergency
+ * queues, active incidents, vehicle conservation, and invalid input.
  */
 public class SimulationSnapshotTest
 {
 
     /**
-     * Creates a valid map of queue lengths. The queues contain four waiting
-     * vehicles total.
+     * Constructs a mutable complete queue map for test scenarios.
      *
-     * @return queue lengths for all four directions
+     * @param north
+     *            north waiting count
+     * @param south
+     *            south waiting count
+     * @param east
+     *            east waiting count
+     * @param west
+     *            west waiting count
+     * @return populated map keyed by direction
      */
-    private Map<Direction, Integer> createQueueLengths()
+    private
+        Map<Direction, Integer>
+        counts(int north, int south, int east, int west)
     {
-        Map<Direction, Integer> queues = new EnumMap<>(Direction.class);
-
-        queues.put(Direction.NORTH, 2);
-        queues.put(Direction.SOUTH, 1);
-        queues.put(Direction.EAST, 0);
-        queues.put(Direction.WEST, 1);
-
-        return queues;
+        EnumMap<Direction, Integer> map = new EnumMap<>(Direction.class);
+        map.put(Direction.NORTH, north);
+        map.put(Direction.SOUTH, south);
+        map.put(Direction.EAST, east);
+        map.put(Direction.WEST, west);
+        return map;
     }
 
 
     /**
-     * Constructs a valid snapshot containing four waiting, two crossing, and
-     * three completed vehicles.
+     * Builds an empty incident map.
      *
-     * @return valid snapshot with nine total arrivals
+     * @return mutable map containing no incidents
      */
-    private SimulationSnapshot createValidSnapshot()
+    private Map<Direction, TrafficEvent> noEvents()
     {
-        return new SimulationSnapshot(
-            10,
-            SignalPhase.NS_GREEN,
-            createQueueLengths(),
-            9,
+        return new EnumMap<>(Direction.class);
+    }
+
+
+    /**
+     * Creates a fully valid snapshot with ten waiting vehicles, three
+     * emergencies waiting, two crossing vehicles, and five completed vehicles.
+     * At t=70 an accident is active on NORTH and a slowdown on EAST.
+     *
+     * @return valid populated snapshot
+     */
+    private SimulationSnapshot populated()
+    {
+        Map<Direction, TrafficEvent> events = noEvents();
+        events.put(
+            Direction.NORTH,
+            new TrafficEvent(
+                TrafficEventType.ACCIDENT,
+                Direction.NORTH,
+                60,
+                45));
+        events.put(
+            Direction.EAST,
+            new TrafficEvent(
+                TrafficEventType.SLOWDOWN,
+                Direction.EAST,
+                65,
+                60));
+        return snapshot(
+            70,
+            SignalPhase.EW_GREEN,
+            60,
             3,
+            counts(4, 3, 2, 1),
+            counts(2, 1, 0, 0),
+            events,
+            17,
+            5,
             2);
     }
 
 
     /**
-     * Verifies that an operation throws IllegalArgumentException.
+     * Creates a snapshot directly from specified input values.
+     *
+     * @param elapsed
+     *            completed steps
+     * @param phase
+     *            signal phase
+     * @param phaseStart
+     *            time current phase began
+     * @param switches
+     *            number of phase switches
+     * @param queues
+     *            all waiting queues
+     * @param emergencyQueues
+     *            emergency waiting subsets
+     * @param events
+     *            map of current incidents
+     * @param arrived
+     *            total generated
+     * @param completed
+     *            total completed
+     * @param crossing
+     *            currently crossing
+     * @return immutable snapshot
+     */
+    private SimulationSnapshot snapshot(
+        int elapsed,
+        SignalPhase phase,
+        int phaseStart,
+        int switches,
+        Map<Direction, Integer> queues,
+        Map<Direction, Integer> emergencyQueues,
+        Map<Direction, TrafficEvent> events,
+        int arrived,
+        int completed,
+        int crossing)
+    {
+        return new SimulationSnapshot(
+            elapsed,
+            phase,
+            phaseStart,
+            switches,
+            queues,
+            emergencyQueues,
+            events,
+            arrived,
+            completed,
+            crossing);
+    }
+
+
+    /**
+     * Creates a valid empty snapshot at the beginning of a simulation.
+     *
+     * @return empty initial snapshot
+     */
+    private SimulationSnapshot initial()
+    {
+        return snapshot(
+            0,
+            SignalPhase.NS_GREEN,
+            0,
+            0,
+            counts(0, 0, 0, 0),
+            counts(0, 0, 0, 0),
+            noEvents(),
+            0,
+            0,
+            0);
+    }
+
+
+    /**
+     * Verifies that the action rejects an invalid input.
      *
      * @param action
-     *            operation expected to fail
+     *            operation expected to throw IllegalArgumentException
      */
     private void assertInvalid(Runnable action)
     {
         try
         {
             action.run();
-            fail("Expected IllegalArgumentException");
+            fail("Expected IllegalArgumentException.");
         }
         catch (IllegalArgumentException expected)
         {
-            // Expected exception.
+            // Expected invalid input.
         }
     }
 
 
     /**
-     * Tests that the constructor stores all supplied data and calculates the
-     * total waiting count.
+     * Verifies all fields and getters of a zero-traffic initial snapshot.
      */
     @Test
-    public void testConstructorAndGetters()
+    public void testInitialSnapshot()
     {
-        SimulationSnapshot snapshot = createValidSnapshot();
-
-        assertEquals(10, snapshot.getElapsedSeconds());
-        assertEquals(SignalPhase.NS_GREEN, snapshot.getSignalPhase());
-
-        assertEquals(9, snapshot.getTotalArrived());
-        assertEquals(3, snapshot.getTotalCompleted());
-        assertEquals(2, snapshot.getCrossingCount());
-        assertEquals(4, snapshot.getWaitingCount());
-    }
-
-
-    /**
-     * Tests construction of an initial snapshot containing no vehicles or
-     * elapsed time.
-     */
-    @Test
-    public void testEmptySnapshot()
-    {
-        Map<Direction, Integer> queues = new EnumMap<>(Direction.class);
-
+        SimulationSnapshot value = initial();
+        assertEquals(0, value.getElapsedSeconds());
+        assertEquals(SignalPhase.NS_GREEN, value.getSignalPhase());
+        assertEquals(0, value.getPhaseStartSecond());
+        assertEquals(0, value.getPhaseElapsedSeconds());
+        assertEquals(0, value.getPhaseSwitchCount());
+        assertEquals(0, value.getTotalArrived());
+        assertEquals(0, value.getTotalCompleted());
+        assertEquals(0, value.getCrossingCount());
+        assertEquals(0, value.getWaitingCount());
+        assertEquals(0, value.getEmergencyWaitingCount());
+        assertTrue(value.getActiveEvents().isEmpty());
         for (Direction direction : Direction.values())
         {
-            queues.put(direction, 0);
+            assertEquals(0, value.getQueueLength(direction));
+            assertEquals(0, value.getEmergencyQueueLength(direction));
+            assertNull(value.getActiveEvent(direction));
+            assertEquals(
+                TrafficEventType.NONE,
+                value.getActiveIncidentType(direction));
+            assertEquals(0, value.getRemainingIncidentSeconds(direction));
         }
-
-        SimulationSnapshot snapshot =
-            new SimulationSnapshot(0, SignalPhase.NS_GREEN, queues, 0, 0, 0);
-
-        assertEquals(0, snapshot.getElapsedSeconds());
-        assertEquals(0, snapshot.getWaitingCount());
-        assertEquals(0, snapshot.getTotalArrived());
-        assertEquals(0, snapshot.getTotalCompleted());
-        assertEquals(0, snapshot.getCrossingCount());
     }
 
 
     /**
-     * Tests retrieval of queue lengths for all four incoming directions.
+     * Tests all vehicle and adaptive-signal metrics in a populated snapshot.
      */
     @Test
-    public void testQueueLengthGetters()
+    public void testPopulatedSnapshot()
     {
-        SimulationSnapshot snapshot = createValidSnapshot();
-
-        assertEquals(2, snapshot.getQueueLength(Direction.NORTH));
-
-        assertEquals(1, snapshot.getQueueLength(Direction.SOUTH));
-
-        assertEquals(0, snapshot.getQueueLength(Direction.EAST));
-
-        assertEquals(1, snapshot.getQueueLength(Direction.WEST));
-
-        assertEquals(4, snapshot.getQueueLengths().size());
+        SimulationSnapshot value = populated();
+        assertEquals(70, value.getElapsedSeconds());
+        assertEquals(SignalPhase.EW_GREEN, value.getSignalPhase());
+        assertEquals(60, value.getPhaseStartSecond());
+        assertEquals(10, value.getPhaseElapsedSeconds());
+        assertEquals(3, value.getPhaseSwitchCount());
+        assertEquals(17, value.getTotalArrived());
+        assertEquals(5, value.getTotalCompleted());
+        assertEquals(2, value.getCrossingCount());
+        assertEquals(10, value.getWaitingCount());
+        assertEquals(3, value.getEmergencyWaitingCount());
+        assertEquals(4, value.getQueueLength(Direction.NORTH));
+        assertEquals(3, value.getQueueLength(Direction.SOUTH));
+        assertEquals(2, value.getQueueLength(Direction.EAST));
+        assertEquals(1, value.getQueueLength(Direction.WEST));
+        assertEquals(2, value.getEmergencyQueueLength(Direction.NORTH));
+        assertEquals(1, value.getEmergencyQueueLength(Direction.SOUTH));
     }
 
 
     /**
-     * Tests that changes to the original queue map do not affect an existing
-     * snapshot.
+     * Verifies accident and slowdown types and their remaining durations.
      */
     @Test
-    public void testDefensiveCopy()
+    public void testIncidentTypesAndRemainingDurations()
     {
-        Map<Direction, Integer> queues = createQueueLengths();
-
-        SimulationSnapshot snapshot =
-            new SimulationSnapshot(10, SignalPhase.NS_GREEN, queues, 9, 3, 2);
-
-        queues.put(Direction.NORTH, 100);
-        queues.remove(Direction.SOUTH);
-
-        assertEquals(2, snapshot.getQueueLength(Direction.NORTH));
-
-        assertEquals(1, snapshot.getQueueLength(Direction.SOUTH));
-
-        assertEquals(4, snapshot.getWaitingCount());
+        SimulationSnapshot value = populated();
+        assertEquals(2, value.getActiveEvents().size());
+        assertEquals(
+            TrafficEventType.ACCIDENT,
+            value.getActiveIncidentType(Direction.NORTH));
+        assertEquals(
+            TrafficEventType.SLOWDOWN,
+            value.getActiveIncidentType(Direction.EAST));
+        assertEquals(35, value.getRemainingIncidentSeconds(Direction.NORTH));
+        assertEquals(55, value.getRemainingIncidentSeconds(Direction.EAST));
+        assertEquals(0, value.getRemainingIncidentSeconds(Direction.SOUTH));
+        assertEquals(
+            TrafficEventType.NONE,
+            value.getActiveIncidentType(Direction.WEST));
+        assertEquals(
+            60,
+            value.getActiveEvent(Direction.NORTH).getStartSecond());
     }
 
 
     /**
-     * Tests that the map returned by the snapshot cannot be modified by another
-     * class.
+     * Verifies the start of an event is included in its active interval.
      */
     @Test
-    public void testUnmodifiableQueueMap()
+    public void testIncidentActiveAtStart()
     {
-        SimulationSnapshot snapshot = createValidSnapshot();
-
-        Map<Direction, Integer> queues = snapshot.getQueueLengths();
-
-        try
-        {
-            queues.put(Direction.NORTH, 50);
-            fail("Expected UnsupportedOperationException");
-        }
-        catch (UnsupportedOperationException expected)
-        {
-            // Expected exception.
-        }
-
-        assertEquals(2, snapshot.getQueueLength(Direction.NORTH));
+        Map<Direction, TrafficEvent> events = noEvents();
+        events.put(
+            Direction.WEST,
+            new TrafficEvent(TrafficEventType.ACCIDENT, Direction.WEST, 60, 5));
+        SimulationSnapshot value = snapshot(
+            60,
+            SignalPhase.NS_GREEN,
+            60,
+            1,
+            counts(0, 0, 0, 0),
+            counts(0, 0, 0, 0),
+            events,
+            0,
+            0,
+            0);
+        assertEquals(5, value.getRemainingIncidentSeconds(Direction.WEST));
     }
 
 
     /**
-     * Tests that a previously created snapshot remains unchanged after a newer
-     * snapshot is constructed with updated information.
+     * Verifies the final active second shows one remaining incident second.
      */
     @Test
-    public void testIndependentSnapshots()
+    public void testIncidentActiveAtFinalSecond()
     {
-        Map<Direction, Integer> queues = createQueueLengths();
-
-        SimulationSnapshot first =
-            new SimulationSnapshot(10, SignalPhase.NS_GREEN, queues, 9, 3, 2);
-
-        queues.put(Direction.NORTH, 3);
-
-        SimulationSnapshot second =
-            new SimulationSnapshot(11, SignalPhase.EW_GREEN, queues, 10, 3, 2);
-
-        assertEquals(2, first.getQueueLength(Direction.NORTH));
-
-        assertEquals(3, second.getQueueLength(Direction.NORTH));
-
-        assertEquals(10, first.getElapsedSeconds());
-        assertEquals(11, second.getElapsedSeconds());
-
-        assertEquals(SignalPhase.NS_GREEN, first.getSignalPhase());
-
-        assertEquals(SignalPhase.EW_GREEN, second.getSignalPhase());
+        Map<Direction, TrafficEvent> events = noEvents();
+        events.put(
+            Direction.WEST,
+            new TrafficEvent(TrafficEventType.ACCIDENT, Direction.WEST, 60, 5));
+        SimulationSnapshot value = snapshot(
+            64,
+            SignalPhase.NS_GREEN,
+            60,
+            1,
+            counts(0, 0, 0, 0),
+            counts(0, 0, 0, 0),
+            events,
+            0,
+            0,
+            0);
+        assertEquals(1, value.getRemainingIncidentSeconds(Direction.WEST));
     }
 
 
     /**
-     * Tests rejection of a null traffic signal phase.
+     * Tests nonempty queues with all waiting vehicles classified as emergency.
      */
     @Test
-    public void testNullSignalPhase()
+    public void testEveryWaitingVehicleCanBeEmergency()
+    {
+        SimulationSnapshot value = snapshot(
+            10,
+            SignalPhase.NS_GREEN,
+            0,
+            0,
+            counts(2, 1, 3, 0),
+            counts(2, 1, 3, 0),
+            noEvents(),
+            6,
+            0,
+            0);
+        assertEquals(6, value.getEmergencyWaitingCount());
+        assertEquals(6, value.getWaitingCount());
+    }
+
+
+    /**
+     * Rejects negative elapsed time.
+     */
+    @Test
+    public void testNegativeElapsedTimeRejected()
     {
         assertInvalid(
-            () -> new SimulationSnapshot(
+            () -> snapshot(
+                -1,
+                SignalPhase.NS_GREEN,
+                0,
+                0,
+                counts(0, 0, 0, 0),
+                counts(0, 0, 0, 0),
+                noEvents(),
+                0,
+                0,
+                0));
+    }
+
+
+    /**
+     * Rejects a missing current signal phase.
+     */
+    @Test
+    public void testNullSignalPhaseRejected()
+    {
+        assertInvalid(
+            () -> snapshot(
                 10,
                 null,
-                createQueueLengths(),
-                9,
-                3,
-                2));
+                0,
+                0,
+                counts(0, 0, 0, 0),
+                counts(0, 0, 0, 0),
+                noEvents(),
+                0,
+                0,
+                0));
     }
 
 
     /**
-     * Tests rejection of a null queue-length map.
+     * Rejects phase start times outside the snapshot's elapsed interval.
      */
     @Test
-    public void testNullQueueMap()
+    public void testInvalidPhaseStartRejected()
     {
         assertInvalid(
-            () -> new SimulationSnapshot(
+            () -> snapshot(
                 10,
                 SignalPhase.NS_GREEN,
+                -1,
+                0,
+                counts(0, 0, 0, 0),
+                counts(0, 0, 0, 0),
+                noEvents(),
+                0,
+                0,
+                0));
+        assertInvalid(
+            () -> snapshot(
+                10,
+                SignalPhase.NS_GREEN,
+                11,
+                0,
+                counts(0, 0, 0, 0),
+                counts(0, 0, 0, 0),
+                noEvents(),
+                0,
+                0,
+                0));
+    }
+
+
+    /**
+     * Rejects negative phase switch counts.
+     */
+    @Test
+    public void testNegativePhaseSwitchCountRejected()
+    {
+        assertInvalid(
+            () -> snapshot(
+                10,
+                SignalPhase.NS_GREEN,
+                0,
+                -1,
+                counts(0, 0, 0, 0),
+                counts(0, 0, 0, 0),
+                noEvents(),
+                0,
+                0,
+                0));
+    }
+
+
+    /**
+     * Rejects missing or incomplete waiting queue maps.
+     */
+    @Test
+    public void testMissingWaitingQueueDataRejected()
+    {
+        assertInvalid(
+            () -> snapshot(
+                0,
+                SignalPhase.NS_GREEN,
+                0,
+                0,
                 null,
-                9,
-                3,
-                2));
+                counts(0, 0, 0, 0),
+                noEvents(),
+                0,
+                0,
+                0));
+        Map<Direction, Integer> missing = counts(0, 0, 0, 0);
+        missing.remove(Direction.WEST);
+        assertInvalid(
+            () -> snapshot(
+                0,
+                SignalPhase.NS_GREEN,
+                0,
+                0,
+                missing,
+                counts(0, 0, 0, 0),
+                noEvents(),
+                0,
+                0,
+                0));
     }
 
 
     /**
-     * Tests rejection of queue maps that omit a direction or contain a null
-     * queue length.
+     * Rejects null and negative waiting counts.
      */
     @Test
-    public void testIncompleteQueueMap()
+    public void testInvalidWaitingQueueCountsRejected()
     {
-        Map<Direction, Integer> queues = createQueueLengths();
-
-        queues.remove(Direction.WEST);
-
+        Map<Direction, Integer> nullCount = counts(0, 0, 0, 0);
+        nullCount.put(Direction.EAST, null);
         assertInvalid(
-            () -> new SimulationSnapshot(
-                10,
+            () -> snapshot(
+                0,
                 SignalPhase.NS_GREEN,
-                queues,
-                9,
-                3,
-                2));
-
-        queues.put(Direction.WEST, null);
-
+                0,
+                0,
+                nullCount,
+                counts(0, 0, 0, 0),
+                noEvents(),
+                0,
+                0,
+                0));
         assertInvalid(
-            () -> new SimulationSnapshot(
-                10,
+            () -> snapshot(
+                0,
                 SignalPhase.NS_GREEN,
-                queues,
-                9,
-                3,
-                2));
+                0,
+                0,
+                counts(-1, 0, 0, 0),
+                counts(0, 0, 0, 0),
+                noEvents(),
+                0,
+                0,
+                0));
     }
 
 
     /**
-     * Tests rejection of negative queue lengths.
+     * Rejects a waiting queue map containing an extra null key.
      */
     @Test
-    public void testNegativeQueueLength()
+    public void testExtraWaitingQueueEntryRejected()
     {
-        Map<Direction, Integer> queues = createQueueLengths();
-
-        queues.put(Direction.NORTH, -1);
-
+        Map<Direction, Integer> extra = new HashMap<>(counts(0, 0, 0, 0));
+        extra.put(null, 0);
         assertInvalid(
-            () -> new SimulationSnapshot(
-                10,
+            () -> snapshot(
+                0,
                 SignalPhase.NS_GREEN,
-                queues,
-                9,
-                3,
-                2));
+                0,
+                0,
+                extra,
+                counts(0, 0, 0, 0),
+                noEvents(),
+                0,
+                0,
+                0));
     }
 
 
     /**
-     * Tests rejection of negative elapsed time.
+     * Rejects missing or incomplete emergency queue maps.
      */
     @Test
-    public void testNegativeElapsedTime()
+    public void testMissingEmergencyQueueDataRejected()
     {
         assertInvalid(
-            () -> new SimulationSnapshot(
+            () -> snapshot(
+                0,
+                SignalPhase.NS_GREEN,
+                0,
+                0,
+                counts(0, 0, 0, 0),
+                null,
+                noEvents(),
+                0,
+                0,
+                0));
+        Map<Direction, Integer> missing = counts(0, 0, 0, 0);
+        missing.remove(Direction.SOUTH);
+        assertInvalid(
+            () -> snapshot(
+                0,
+                SignalPhase.NS_GREEN,
+                0,
+                0,
+                counts(0, 0, 0, 0),
+                missing,
+                noEvents(),
+                0,
+                0,
+                0));
+    }
+
+
+    /**
+     * Rejects null and negative emergency queue counts.
+     */
+    @Test
+    public void testInvalidEmergencyQueueCountsRejected()
+    {
+        Map<Direction, Integer> nullCount = counts(0, 0, 0, 0);
+        nullCount.put(Direction.EAST, null);
+        assertInvalid(
+            () -> snapshot(
+                0,
+                SignalPhase.NS_GREEN,
+                0,
+                0,
+                counts(0, 0, 0, 0),
+                nullCount,
+                noEvents(),
+                0,
+                0,
+                0));
+        assertInvalid(
+            () -> snapshot(
+                0,
+                SignalPhase.NS_GREEN,
+                0,
+                0,
+                counts(0, 0, 0, 0),
+                counts(-1, 0, 0, 0),
+                noEvents(),
+                0,
+                0,
+                0));
+    }
+
+
+    /**
+     * Rejects a greater emergency queue count than total waiting vehicles.
+     */
+    @Test
+    public void testEmergencyCannotExceedApproachQueue()
+    {
+        assertInvalid(
+            () -> snapshot(
+                0,
+                SignalPhase.NS_GREEN,
+                0,
+                0,
+                counts(2, 0, 0, 0),
+                counts(3, 0, 0, 0),
+                noEvents(),
+                2,
+                0,
+                0));
+    }
+
+
+    /**
+     * Rejects emergency queue maps with extra keys.
+     */
+    @Test
+    public void testExtraEmergencyQueueEntryRejected()
+    {
+        Map<Direction, Integer> extra = new HashMap<>(counts(0, 0, 0, 0));
+        extra.put(null, 0);
+        assertInvalid(
+            () -> snapshot(
+                0,
+                SignalPhase.NS_GREEN,
+                0,
+                0,
+                counts(0, 0, 0, 0),
+                extra,
+                noEvents(),
+                0,
+                0,
+                0));
+    }
+
+
+    /**
+     * Rejects negative arrived, completed, and crossing totals.
+     */
+    @Test
+    public void testNegativeVehicleTotalsRejected()
+    {
+        assertInvalid(
+            () -> snapshot(
+                0,
+                SignalPhase.NS_GREEN,
+                0,
+                0,
+                counts(0, 0, 0, 0),
+                counts(0, 0, 0, 0),
+                noEvents(),
                 -1,
-                SignalPhase.NS_GREEN,
-                createQueueLengths(),
-                9,
-                3,
-                2));
-    }
-
-
-    /**
-     * Tests rejection of negative arrival, completion, and crossing counts.
-     */
-    @Test
-    public void testNegativeVehicleCounts()
-    {
-        Map<Direction, Integer> queues = createQueueLengths();
-
+                0,
+                0));
         assertInvalid(
-            () -> new SimulationSnapshot(
-                10,
+            () -> snapshot(
+                0,
                 SignalPhase.NS_GREEN,
-                queues,
+                0,
+                0,
+                counts(0, 0, 0, 0),
+                counts(0, 0, 0, 0),
+                noEvents(),
+                0,
                 -1,
-                3,
-                2));
-
+                0));
         assertInvalid(
-            () -> new SimulationSnapshot(
-                10,
+            () -> snapshot(
+                0,
                 SignalPhase.NS_GREEN,
-                queues,
-                9,
-                -1,
-                2));
-
-        assertInvalid(
-            () -> new SimulationSnapshot(
-                10,
-                SignalPhase.NS_GREEN,
-                queues,
-                9,
-                3,
+                0,
+                0,
+                counts(0, 0, 0, 0),
+                counts(0, 0, 0, 0),
+                noEvents(),
+                0,
+                0,
                 -1));
     }
 
 
     /**
-     * Tests that the constructor rejects vehicle counts violating the
-     * conservation equation.
+     * Rejects snapshots whose vehicle counts violate conservation.
      */
     @Test
-    public void testVehicleConservation()
+    public void testVehicleConservationRejected()
     {
-        Map<Direction, Integer> queues = createQueueLengths();
-
-        // Correct total is 4 + 2 + 3 = 9.
         assertInvalid(
-            () -> new SimulationSnapshot(
+            () -> snapshot(
                 10,
                 SignalPhase.NS_GREEN,
-                queues,
-                10,
-                3,
-                2));
-
+                0,
+                0,
+                counts(2, 1, 0, 0),
+                counts(0, 0, 0, 0),
+                noEvents(),
+                5,
+                1,
+                0));
         assertInvalid(
-            () -> new SimulationSnapshot(
+            () -> snapshot(
                 10,
                 SignalPhase.NS_GREEN,
-                queues,
-                8,
+                0,
+                0,
+                counts(2, 1, 0, 0),
+                counts(0, 0, 0, 0),
+                noEvents(),
                 3,
-                2));
-
-        SimulationSnapshot valid =
-            new SimulationSnapshot(10, SignalPhase.NS_GREEN, queues, 9, 3, 2);
-
-        assertEquals(
-            valid.getTotalArrived(),
-            valid.getWaitingCount() + valid.getCrossingCount()
-                + valid.getTotalCompleted());
+                1,
+                0));
     }
 
 
     /**
-     * Tests that a null approach cannot be used to query an individual queue
-     * length.
+     * Tests that vehicle conservation uses long arithmetic to avoid overflow.
      */
     @Test
-    public void testNullDirectionGetter()
+    public void testConservationArithmeticCannotOverflow()
     {
-        SimulationSnapshot snapshot = createValidSnapshot();
-
-        assertInvalid(() -> snapshot.getQueueLength(null));
-    }
-
-
-    /**
-     * Tests a very large valid vehicle count and confirms that queue-sum
-     * validation does not overflow integer arithmetic.
-     */
-    @Test
-    public void testLargeVehicleCounts()
-    {
-        Map<Direction, Integer> empty = new EnumMap<>(Direction.class);
-
-        for (Direction direction : Direction.values())
-        {
-            empty.put(direction, 0);
-        }
-
-        SimulationSnapshot valid = new SimulationSnapshot(
-            Integer.MAX_VALUE,
+        assertInvalid(
+            () -> snapshot(
+                10,
+                SignalPhase.NS_GREEN,
+                0,
+                0,
+                counts(Integer.MAX_VALUE, Integer.MAX_VALUE, 0, 0),
+                counts(0, 0, 0, 0),
+                noEvents(),
+                0,
+                0,
+                0));
+        SimulationSnapshot maximum = snapshot(
+            10,
             SignalPhase.NS_GREEN,
-            empty,
+            0,
+            0,
+            counts(Integer.MAX_VALUE, 0, 0, 0),
+            counts(0, 0, 0, 0),
+            noEvents(),
             Integer.MAX_VALUE,
-            Integer.MAX_VALUE,
+            0,
             0);
+        assertEquals(Integer.MAX_VALUE, maximum.getWaitingCount());
+    }
 
-        assertEquals(Integer.MAX_VALUE, valid.getTotalArrived());
 
-        Map<Direction, Integer> huge = new EnumMap<>(Direction.class);
-
-        for (Direction direction : Direction.values())
-        {
-            huge.put(direction, Integer.MAX_VALUE);
-        }
-
+    /**
+     * Rejects a null active incident map.
+     */
+    @Test
+    public void testNullIncidentMapRejected()
+    {
         assertInvalid(
-            () -> new SimulationSnapshot(
+            () -> snapshot(
+                0,
+                SignalPhase.NS_GREEN,
+                0,
+                0,
+                counts(0, 0, 0, 0),
+                counts(0, 0, 0, 0),
+                null,
+                0,
+                0,
+                0));
+    }
+
+
+    /**
+     * Rejects active incident maps containing a null direction key.
+     */
+    @Test
+    public void testNullIncidentKeyRejected()
+    {
+        Map<Direction, TrafficEvent> events = new HashMap<>();
+        events.put(
+            null,
+            new TrafficEvent(
+                TrafficEventType.ACCIDENT,
+                Direction.NORTH,
+                10,
+                10));
+        assertInvalid(
+            () -> snapshot(
                 10,
                 SignalPhase.NS_GREEN,
-                huge,
-                Integer.MAX_VALUE,
+                0,
+                0,
+                counts(0, 0, 0, 0),
+                counts(0, 0, 0, 0),
+                events,
+                0,
+                0,
+                0));
+    }
+
+
+    /**
+     * Rejects active incident maps containing a null incident.
+     */
+    @Test
+    public void testNullIncidentValueRejected()
+    {
+        Map<Direction, TrafficEvent> events = noEvents();
+        events.put(Direction.NORTH, null);
+        assertInvalid(
+            () -> snapshot(
+                10,
+                SignalPhase.NS_GREEN,
+                0,
+                0,
+                counts(0, 0, 0, 0),
+                counts(0, 0, 0, 0),
+                events,
+                0,
+                0,
+                0));
+    }
+
+
+    /**
+     * Rejects incidents stored under a different direction than affected.
+     */
+    @Test
+    public void testMismatchedIncidentDirectionRejected()
+    {
+        Map<Direction, TrafficEvent> events = noEvents();
+        events.put(
+            Direction.NORTH,
+            new TrafficEvent(
+                TrafficEventType.ACCIDENT,
+                Direction.EAST,
+                10,
+                10));
+        assertInvalid(
+            () -> snapshot(
+                10,
+                SignalPhase.NS_GREEN,
+                0,
+                0,
+                counts(0, 0, 0, 0),
+                counts(0, 0, 0, 0),
+                events,
+                0,
+                0,
+                0));
+    }
+
+
+    /**
+     * Rejects incidents that have not started by the snapshot time.
+     */
+    @Test
+    public void testFutureIncidentRejected()
+    {
+        Map<Direction, TrafficEvent> events = noEvents();
+        events.put(
+            Direction.NORTH,
+            new TrafficEvent(
+                TrafficEventType.ACCIDENT,
+                Direction.NORTH,
+                11,
+                10));
+        assertInvalid(
+            () -> snapshot(
+                10,
+                SignalPhase.NS_GREEN,
+                0,
+                0,
+                counts(0, 0, 0, 0),
+                counts(0, 0, 0, 0),
+                events,
+                0,
+                0,
+                0));
+    }
+
+
+    /**
+     * Rejects incidents at or after their exclusive end time.
+     */
+    @Test
+    public void testExpiredIncidentRejected()
+    {
+        Map<Direction, TrafficEvent> events = noEvents();
+        events.put(
+            Direction.NORTH,
+            new TrafficEvent(
+                TrafficEventType.ACCIDENT,
+                Direction.NORTH,
+                10,
+                5));
+        assertInvalid(
+            () -> snapshot(
+                15,
+                SignalPhase.NS_GREEN,
+                0,
+                0,
+                counts(0, 0, 0, 0),
+                counts(0, 0, 0, 0),
+                events,
+                0,
+                0,
+                0));
+    }
+
+
+    /**
+     * Tests all input maps are copied rather than retained by the snapshot.
+     */
+    @Test
+    public void testInputMapsDefensivelyCopied()
+    {
+        Map<Direction, Integer> queues = counts(1, 0, 0, 0);
+        Map<Direction, Integer> emergencies = counts(1, 0, 0, 0);
+        Map<Direction, TrafficEvent> events = noEvents();
+        TrafficEvent accident = new TrafficEvent(
+            TrafficEventType.ACCIDENT,
+            Direction.NORTH,
+            10,
+            10);
+        events.put(Direction.NORTH, accident);
+        SimulationSnapshot value = snapshot(
+            10,
+            SignalPhase.NS_GREEN,
+            0,
+            0,
+            queues,
+            emergencies,
+            events,
+            1,
+            0,
+            0);
+        queues.put(Direction.NORTH, 100);
+        emergencies.put(Direction.NORTH, 0);
+        events.clear();
+        assertEquals(1, value.getQueueLength(Direction.NORTH));
+        assertEquals(1, value.getEmergencyQueueLength(Direction.NORTH));
+        assertEquals(1, value.getEmergencyWaitingCount());
+        assertTrue(accident == value.getActiveEvent(Direction.NORTH));
+    }
+
+
+    /**
+     * Tests all returned maps are read-only.
+     */
+    @Test
+    public void testReturnedMapsUnmodifiable()
+    {
+        SimulationSnapshot value = populated();
+        try
+        {
+            value.getQueueLengths().put(Direction.NORTH, 99);
+            fail("Expected immutable normal queue map.");
+        }
+        catch (UnsupportedOperationException expected)
+        {
+            // Expected read-only map.
+        }
+        try
+        {
+            value.getEmergencyQueueLengths().clear();
+            fail("Expected immutable emergency queue map.");
+        }
+        catch (UnsupportedOperationException expected)
+        {
+            // Expected read-only map.
+        }
+        try
+        {
+            value.getActiveEvents().remove(Direction.NORTH);
+            fail("Expected immutable incident map.");
+        }
+        catch (UnsupportedOperationException expected)
+        {
+            // Expected read-only map.
+        }
+        assertEquals(4, value.getQueueLength(Direction.NORTH));
+        assertEquals(2, value.getEmergencyQueueLength(Direction.NORTH));
+        assertEquals(2, value.getActiveEvents().size());
+    }
+
+
+    /**
+     * Verifies all direction-specific getters reject null input.
+     */
+    @Test
+    public void testNullDirectionLookupsRejected()
+    {
+        SimulationSnapshot value = populated();
+        assertInvalid(() -> value.getQueueLength(null));
+        assertInvalid(() -> value.getEmergencyQueueLength(null));
+        assertInvalid(() -> value.getActiveEvent(null));
+        assertInvalid(() -> value.getActiveIncidentType(null));
+        assertInvalid(() -> value.getRemainingIncidentSeconds(null));
+    }
+
+
+    /**
+     * Tests snapshots do not share mutable state with one another.
+     */
+    @Test
+    public void testIndependentSnapshots()
+    {
+        SimulationSnapshot first = populated();
+        SimulationSnapshot second = initial();
+        assertEquals(17, first.getTotalArrived());
+        assertEquals(0, second.getTotalArrived());
+        assertEquals(2, first.getActiveEvents().size());
+        assertTrue(second.getActiveEvents().isEmpty());
+        assertEquals(3, first.getEmergencyWaitingCount());
+        assertEquals(0, second.getEmergencyWaitingCount());
+    }
+
+
+    /**
+     * Tests empty immutable input maps are rejected if incomplete.
+     */
+    @Test
+    public void testEmptyQueueMapsRejected()
+    {
+        assertInvalid(
+            () -> snapshot(
+                0,
+                SignalPhase.NS_GREEN,
+                0,
+                0,
+                Collections.<Direction, Integer> emptyMap(),
+                counts(0, 0, 0, 0),
+                noEvents(),
+                0,
+                0,
+                0));
+        assertInvalid(
+            () -> snapshot(
+                0,
+                SignalPhase.NS_GREEN,
+                0,
+                0,
+                counts(0, 0, 0, 0),
+                Collections.<Direction, Integer> emptyMap(),
+                noEvents(),
+                0,
                 0,
                 0));
     }

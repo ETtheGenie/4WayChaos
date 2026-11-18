@@ -1,718 +1,805 @@
-package defaultPackage;
 
-import static org.junit.Assert.*;
-import org.junit.Before;
-import org.junit.Test;
+package defaultPackage;
 
 import static org.junit.Assert.*;
 
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.Map;
 import org.junit.Test;
 
 /**
- * JUnit 4 tests for SimulationResults. Verifies final report construction,
- * statistics, immutability, and input validation.
+ * JUnit 4 tests for V2 SimulationResults: vehicle conservation, emergency
+ * subsets, incident and signal metrics, queue statistics, and immutability.
  */
 public class SimulationResultsTest
 {
 
     /**
-     * Creates valid final queue lengths.
-     *
-     * @return queue lengths totaling six vehicles
+     * Mutable test-only input fixture used to construct reports with one
+     * modified setting at a time. Not part of the production model API.
      */
-    private Map<Direction, Integer> finalQueues()
+    private static final class ReportInput
     {
-        Map<Direction, Integer> values = new EnumMap<>(Direction.class);
+        int duration = 120;
+        int arrived = 20;
+        int completed = 11;
+        int crossing = 2;
+        Double averageWait = 6.5;
+        Map<Direction, Integer> finalQueues = ints(3, 2, 1, 1);
+        Map<Direction, Double> averageQueues = doubles(1.5, 1.0, 0.5, 0.5);
+        Map<Direction, Integer> maximumQueues = ints(4, 3, 2, 2);
+        int emergencyArrived = 6;
+        int emergencyCompleted = 4;
+        Double emergencyAverageWait = 5.25;
+        int accidents = 2;
+        int slowdowns = 3;
+        int switches = 5;
 
-        values.put(Direction.NORTH, 2);
-        values.put(Direction.SOUTH, 1);
-        values.put(Direction.EAST, 2);
-        values.put(Direction.WEST, 1);
+        /**
+         * Constructs the production report using the current test inputs.
+         *
+         * @return new immutable simulation results
+         */
+        SimulationResults build()
+        {
+            return new SimulationResults(
+                duration,
+                arrived,
+                completed,
+                crossing,
+                averageWait,
+                finalQueues,
+                averageQueues,
+                maximumQueues,
+                emergencyArrived,
+                emergencyCompleted,
+                emergencyAverageWait,
+                accidents,
+                slowdowns,
+                switches);
+        }
+    }
 
-        return values;
+    /**
+     * Builds a map of integer queue sizes in NORTH, SOUTH, EAST, WEST order.
+     *
+     * @param north
+     *            north value
+     * @param south
+     *            south value
+     * @param east
+     *            east value
+     * @param west
+     *            west value
+     * @return mutable map with all directions
+     */
+    private static
+        Map<Direction, Integer>
+        ints(int north, int south, int east, int west)
+    {
+        EnumMap<Direction, Integer> map = new EnumMap<>(Direction.class);
+        map.put(Direction.NORTH, north);
+        map.put(Direction.SOUTH, south);
+        map.put(Direction.EAST, east);
+        map.put(Direction.WEST, west);
+        return map;
     }
 
 
     /**
-     * Creates valid average queue lengths.
+     * Builds a map of average queue lengths in direction order.
      *
-     * @return average lengths for all four approaches
+     * @param north
+     *            north average
+     * @param south
+     *            south average
+     * @param east
+     *            east average
+     * @param west
+     *            west average
+     * @return mutable map with all directions
      */
-    private Map<Direction, Double> averageQueues()
+    private static
+        Map<Direction, Double>
+        doubles(double north, double south, double east, double west)
     {
-        Map<Direction, Double> values = new EnumMap<>(Direction.class);
-
-        values.put(Direction.NORTH, 1.5);
-        values.put(Direction.SOUTH, 0.5);
-        values.put(Direction.EAST, 1.0);
-        values.put(Direction.WEST, 0.25);
-
-        return values;
+        EnumMap<Direction, Double> map = new EnumMap<>(Direction.class);
+        map.put(Direction.NORTH, north);
+        map.put(Direction.SOUTH, south);
+        map.put(Direction.EAST, east);
+        map.put(Direction.WEST, west);
+        return map;
     }
 
 
     /**
-     * Creates valid maximum queue lengths.
+     * Constructs a valid scenario with queued and crossing vehicles, several
+     * completed emergency vehicles, and some incidents and phase switches.
      *
-     * @return maximum lengths for all four approaches
+     * @return populated report input fixture
      */
-    private Map<Direction, Integer> maximumQueues()
+    private ReportInput populated()
     {
-        Map<Direction, Integer> values = new EnumMap<>(Direction.class);
-
-        values.put(Direction.NORTH, 3);
-        values.put(Direction.SOUTH, 2);
-        values.put(Direction.EAST, 4);
-        values.put(Direction.WEST, 1);
-
-        return values;
+        return new ReportInput();
     }
 
 
     /**
-     * Constructs a valid report with twenty arrivals.
+     * Creates a valid zero-traffic report fixture.
      *
-     * @return valid SimulationResults instance
+     * @return empty report input fixture
      */
-    private SimulationResults validResults()
+    private ReportInput empty()
     {
-        return new SimulationResults(
-            60,
-            20,
-            12,
-            2,
-            6.5,
-            finalQueues(),
-            averageQueues(),
-            maximumQueues());
+        ReportInput input = populated();
+        input.arrived = 0;
+        input.completed = 0;
+        input.crossing = 0;
+        input.averageWait = null;
+        input.finalQueues = ints(0, 0, 0, 0);
+        input.averageQueues = doubles(0, 0, 0, 0);
+        input.maximumQueues = ints(0, 0, 0, 0);
+        input.emergencyArrived = 0;
+        input.emergencyCompleted = 0;
+        input.emergencyAverageWait = null;
+        input.accidents = 0;
+        input.slowdowns = 0;
+        input.switches = 0;
+        return input;
     }
 
 
     /**
-     * Verifies that an operation rejects invalid input.
+     * Confirms that an operation rejects invalid report data.
      *
      * @param action
-     *            operation expected to fail
+     *            operation expected to throw IllegalArgumentException
      */
     private void assertInvalid(Runnable action)
     {
         try
         {
             action.run();
-            fail("Expected IllegalArgumentException");
+            fail("Expected IllegalArgumentException.");
         }
         catch (IllegalArgumentException expected)
         {
-            // Expected exception.
+            // Expected validation failure.
         }
     }
 
 
     /**
-     * Tests construction and all summary getters.
+     * Confirms a candidate report fixture is rejected by the constructor.
+     *
+     * @param input
+     *            test values expected to violate a validation rule
+     */
+    private void assertInvalidBuild(ReportInput input)
+    {
+        assertInvalid(() -> input.build());
+    }
+
+
+    /**
+     * Verifies all existing and newly introduced getters on a populated report.
      */
     @Test
-    public void testConstructorAndGetters()
+    public void testPopulatedResultsAndAllGetters()
     {
-        SimulationResults results = validResults();
-
-        assertEquals(60, results.getDurationSeconds());
-        assertEquals(20, results.getTotalArrived());
-        assertEquals(12, results.getTotalCompleted());
-        assertEquals(6, results.getWaitingCount());
-        assertEquals(2, results.getCrossingCount());
-
-        assertEquals(6.5, results.getAverageWaitingTimeSeconds(), 0.0001);
-
-        assertEquals(2, results.getFinalQueueLength(Direction.NORTH));
-
+        SimulationResults result = populated().build();
+        assertEquals(120, result.getDurationSeconds());
+        assertEquals(20, result.getTotalArrived());
+        assertEquals(11, result.getTotalCompleted());
+        assertEquals(7, result.getWaitingCount());
+        assertEquals(2, result.getCrossingCount());
+        assertEquals(6.5, result.getAverageWaitingTimeSeconds(), 0.000001);
+        assertEquals(6, result.getTotalEmergencyArrived());
+        assertEquals(4, result.getTotalEmergencyCompleted());
+        assertEquals(2, result.getEmergencyUnfinishedCount());
         assertEquals(
-            1.5,
-            results.getAverageQueueLength(Direction.NORTH),
-            0.0001);
-
-        assertEquals(3, results.getMaximumQueueLength(Direction.NORTH));
-
-        assertEquals(4, results.getFinalQueueLengths().size());
-        assertEquals(4, results.getAverageQueueLengths().size());
-        assertEquals(4, results.getMaximumQueueLengths().size());
+            5.25,
+            result.getAverageEmergencyWaitingTimeSeconds(),
+            0.000001);
+        assertEquals(2, result.getTotalAccidents());
+        assertEquals(3, result.getTotalSlowdowns());
+        assertEquals(5, result.getPhaseSwitchCount());
+        assertEquals(4, result.getFinalQueueLengths().size());
+        assertEquals(4, result.getAverageQueueLengths().size());
+        assertEquals(4, result.getMaximumQueueLengths().size());
+        assertEquals(3, result.getFinalQueueLength(Direction.NORTH));
+        assertEquals(2, result.getFinalQueueLength(Direction.SOUTH));
+        assertEquals(1, result.getFinalQueueLength(Direction.EAST));
+        assertEquals(1, result.getFinalQueueLength(Direction.WEST));
+        assertEquals(1.5, result.getAverageQueueLength(Direction.NORTH), 0.0);
+        assertEquals(1.0, result.getAverageQueueLength(Direction.SOUTH), 0.0);
+        assertEquals(0.5, result.getAverageQueueLength(Direction.EAST), 0.0);
+        assertEquals(0.5, result.getAverageQueueLength(Direction.WEST), 0.0);
+        assertEquals(4, result.getMaximumQueueLength(Direction.NORTH));
+        assertEquals(3, result.getMaximumQueueLength(Direction.SOUTH));
+        assertEquals(2, result.getMaximumQueueLength(Direction.EAST));
+        assertEquals(2, result.getMaximumQueueLength(Direction.WEST));
     }
 
 
     /**
-     * Tests an empty simulation with zero arrivals and undefined average
-     * waiting time.
+     * Tests an empty report with both waiting-time averages undefined.
      */
     @Test
-    public void testNoTraffic()
+    public void testEmptyResults()
     {
-        Map<Direction, Integer> zeros = new EnumMap<>(Direction.class);
-
-        Map<Direction, Double> averageZeros = new EnumMap<>(Direction.class);
-
-        for (Direction direction : Direction.values())
-        {
-            zeros.put(direction, 0);
-            averageZeros.put(direction, 0.0);
-        }
-
-        SimulationResults results = new SimulationResults(
-            60,
-            0,
-            0,
-            0,
-            null,
-            zeros,
-            averageZeros,
-            zeros);
-
-        assertEquals(0, results.getTotalArrived());
-        assertEquals(0, results.getWaitingCount());
-        assertNull(results.getAverageWaitingTimeSeconds());
+        SimulationResults result = empty().build();
+        assertEquals(0, result.getTotalArrived());
+        assertEquals(0, result.getTotalCompleted());
+        assertEquals(0, result.getWaitingCount());
+        assertEquals(0, result.getCrossingCount());
+        assertEquals(0, result.getEmergencyUnfinishedCount());
+        assertNull(result.getAverageWaitingTimeSeconds());
+        assertNull(result.getAverageEmergencyWaitingTimeSeconds());
+        assertEquals(0, result.getTotalAccidents());
+        assertEquals(0, result.getTotalSlowdowns());
+        assertEquals(0, result.getPhaseSwitchCount());
     }
 
 
     /**
-     * Tests that unfinished vehicles are preserved even if no vehicles
-     * completed the intersection.
+     * Accepts a run in which all vehicles were emergency vehicles.
      */
     @Test
-    public void testNoCompletionsButVehiclesRemain()
+    public void testAllVehiclesEmergency()
     {
-        SimulationResults results = new SimulationResults(
-            60,
-            8,
-            0,
-            2,
-            null,
-            finalQueues(),
-            averageQueues(),
-            maximumQueues());
-
-        assertEquals(6, results.getWaitingCount());
-        assertEquals(2, results.getCrossingCount());
-        assertNull(results.getAverageWaitingTimeSeconds());
+        ReportInput input = empty();
+        input.arrived = 2;
+        input.completed = 2;
+        input.emergencyArrived = 2;
+        input.emergencyCompleted = 2;
+        input.averageWait = 4.0;
+        input.emergencyAverageWait = 4.0;
+        SimulationResults result = input.build();
+        assertEquals(2, result.getTotalEmergencyCompleted());
+        assertEquals(0, result.getEmergencyUnfinishedCount());
     }
 
 
     /**
-     * Tests that modifying input maps after construction does not modify the
-     * completed report.
+     * Accepts emergency arrivals with no completed emergencies, while ordinary
+     * vehicles may have completed.
      */
     @Test
-    public void testDefensiveCopies()
+    public void testUnfinishedEmergencyVehicles()
     {
-        Map<Direction, Integer> finals = finalQueues();
-        Map<Direction, Double> averages = averageQueues();
-        Map<Direction, Integer> maxima = maximumQueues();
-
-        SimulationResults results =
-            new SimulationResults(60, 20, 12, 2, 6.5, finals, averages, maxima);
-
-        finals.put(Direction.NORTH, 99);
-        averages.put(Direction.NORTH, 99.0);
-        maxima.put(Direction.NORTH, 99);
-
-        assertEquals(2, results.getFinalQueueLength(Direction.NORTH));
-
-        assertEquals(
-            1.5,
-            results.getAverageQueueLength(Direction.NORTH),
-            0.0001);
-
-        assertEquals(3, results.getMaximumQueueLength(Direction.NORTH));
+        ReportInput input = populated();
+        input.emergencyCompleted = 0;
+        input.emergencyAverageWait = null;
+        SimulationResults result = input.build();
+        assertEquals(6, result.getEmergencyUnfinishedCount());
+        assertNull(result.getAverageEmergencyWaitingTimeSeconds());
     }
 
 
     /**
-     * Tests that all returned statistics maps are unmodifiable.
+     * Tests inclusive minimum and maximum permitted simulation durations.
      */
     @Test
-    public void testUnmodifiableMaps()
+    public void testDurationBoundariesAccepted()
     {
-        SimulationResults results = validResults();
-
-        try
-        {
-            results.getFinalQueueLengths().put(Direction.NORTH, 99);
-            fail("Expected UnsupportedOperationException");
-        }
-        catch (UnsupportedOperationException expected)
-        {
-            // Expected.
-        }
-
-        try
-        {
-            results.getAverageQueueLengths().put(Direction.NORTH, 99.0);
-            fail("Expected UnsupportedOperationException");
-        }
-        catch (UnsupportedOperationException expected)
-        {
-            // Expected.
-        }
-
-        try
-        {
-            results.getMaximumQueueLengths().put(Direction.NORTH, 99);
-            fail("Expected UnsupportedOperationException");
-        }
-        catch (UnsupportedOperationException expected)
-        {
-            // Expected.
-        }
+        ReportInput input = populated();
+        input.duration = SimulationConfig.MIN_DURATION_SECONDS;
+        assertEquals(60, input.build().getDurationSeconds());
+        input.duration = SimulationConfig.MAX_DURATION_SECONDS;
+        assertEquals(7200, input.build().getDurationSeconds());
     }
 
 
     /**
-     * Tests rejection of null directions in individual queue-statistics
-     * getters.
+     * Rejects simulation durations outside the original validated range.
      */
     @Test
-    public void testNullDirectionGetters()
+    public void testInvalidDurations()
     {
-        SimulationResults results = validResults();
-
-        assertInvalid(() -> results.getFinalQueueLength(null));
-
-        assertInvalid(() -> results.getAverageQueueLength(null));
-
-        assertInvalid(() -> results.getMaximumQueueLength(null));
+        ReportInput input = populated();
+        input.duration = 59;
+        assertInvalidBuild(input);
+        input.duration = 7201;
+        assertInvalidBuild(input);
+        input.duration = -1;
+        assertInvalidBuild(input);
     }
 
 
     /**
-     * Tests rejection of simulation durations outside the established
-     * configuration limits.
-     */
-    @Test
-    public void testInvalidDuration()
-    {
-        assertInvalid(
-            () -> new SimulationResults(
-                59,
-                20,
-                12,
-                2,
-                6.5,
-                finalQueues(),
-                averageQueues(),
-                maximumQueues()));
-
-        assertInvalid(
-            () -> new SimulationResults(
-                7201,
-                20,
-                12,
-                2,
-                6.5,
-                finalQueues(),
-                averageQueues(),
-                maximumQueues()));
-    }
-
-
-    /**
-     * Tests rejection of negative arrival, completion, and crossing counts.
+     * Rejects negative generated, completed, or crossing counts.
      */
     @Test
     public void testNegativeVehicleCounts()
     {
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                -1,
-                12,
-                2,
-                6.5,
-                finalQueues(),
-                averageQueues(),
-                maximumQueues()));
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                -1,
-                2,
-                6.5,
-                finalQueues(),
-                averageQueues(),
-                maximumQueues()));
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                -1,
-                6.5,
-                finalQueues(),
-                averageQueues(),
-                maximumQueues()));
+        ReportInput input = populated();
+        input.arrived = -1;
+        assertInvalidBuild(input);
+        input = populated();
+        input.completed = -1;
+        assertInvalidBuild(input);
+        input = populated();
+        input.crossing = -1;
+        assertInvalidBuild(input);
     }
 
 
     /**
-     * Tests that the total number of arrivals must equal waiting + crossing +
-     * completed.
+     * Rejects missing vehicles or excessive completed/crossing counts under the
+     * conservation rule.
      */
     @Test
-    public void testInconsistentVehicleTotals()
+    public void testVehicleConservationBothDirections()
     {
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                19,
-                12,
-                2,
-                6.5,
-                finalQueues(),
-                averageQueues(),
-                maximumQueues()));
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                21,
-                12,
-                2,
-                6.5,
-                finalQueues(),
-                averageQueues(),
-                maximumQueues()));
+        ReportInput input = populated();
+        input.arrived = 19;
+        assertInvalidBuild(input);
+        input.arrived = 21;
+        assertInvalidBuild(input);
+        input.arrived = 20;
+        input.crossing = 3;
+        assertInvalidBuild(input);
     }
 
 
     /**
-     * Tests rejection of missing, negative, non-finite, or incorrectly defined
-     * average waiting times.
+     * Ensures the conservation check uses long arithmetic for large queues.
      */
     @Test
-    public void testInvalidAverageWaitingTime()
+    public void testVehicleConservationOverflowSafe()
     {
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                null,
-                finalQueues(),
-                averageQueues(),
-                maximumQueues()));
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                -1.0,
-                finalQueues(),
-                averageQueues(),
-                maximumQueues()));
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                Double.NaN,
-                finalQueues(),
-                averageQueues(),
-                maximumQueues()));
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                Double.POSITIVE_INFINITY,
-                finalQueues(),
-                averageQueues(),
-                maximumQueues()));
-
-        // An average is undefined with zero completions.
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                8,
-                0,
-                2,
-                0.0,
-                finalQueues(),
-                averageQueues(),
-                maximumQueues()));
+        ReportInput input = empty();
+        input.finalQueues = ints(Integer.MAX_VALUE, Integer.MAX_VALUE, 0, 0);
+        input.maximumQueues = ints(Integer.MAX_VALUE, Integer.MAX_VALUE, 0, 0);
+        assertInvalidBuild(input);
     }
 
 
     /**
-     * Tests rejection of null statistics maps.
+     * Rejects absent overall average wait when some vehicles completed.
      */
     @Test
-    public void testNullStatisticsMaps()
+    public void testMissingOverallAverageRejected()
     {
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                6.5,
-                null,
-                averageQueues(),
-                maximumQueues()));
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                6.5,
-                finalQueues(),
-                null,
-                maximumQueues()));
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                6.5,
-                finalQueues(),
-                averageQueues(),
-                null));
+        ReportInput input = populated();
+        input.averageWait = null;
+        assertInvalidBuild(input);
     }
 
 
     /**
-     * Tests that statistics maps must include all four directions.
+     * Rejects an overall waiting-time average without completed vehicles.
      */
     @Test
-    public void testIncompleteStatisticsMaps()
+    public void testUnexpectedOverallAverageRejected()
     {
-        Map<Direction, Integer> finals = finalQueues();
-        finals.remove(Direction.WEST);
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                6.5,
-                finals,
-                averageQueues(),
-                maximumQueues()));
-
-        Map<Direction, Double> averages = averageQueues();
-        averages.remove(Direction.WEST);
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                6.5,
-                finalQueues(),
-                averages,
-                maximumQueues()));
-
-        Map<Direction, Integer> maxima = maximumQueues();
-        maxima.remove(Direction.WEST);
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                6.5,
-                finalQueues(),
-                averageQueues(),
-                maxima));
+        ReportInput input = empty();
+        input.averageWait = 0.0;
+        assertInvalidBuild(input);
     }
 
 
     /**
-     * Tests rejection of null and negative values in the per-direction
-     * statistics maps.
+     * Rejects negative, NaN, and infinite overall waiting-time averages.
      */
     @Test
-    public void testInvalidQueueValues()
+    public void testInvalidOverallAverages()
     {
-        Map<Direction, Integer> finals = finalQueues();
-
-        finals.put(Direction.NORTH, null);
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                6.5,
-                finals,
-                averageQueues(),
-                maximumQueues()));
-
-        finals.put(Direction.NORTH, -1);
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                6.5,
-                finals,
-                averageQueues(),
-                maximumQueues()));
-
-        Map<Direction, Double> averages = averageQueues();
-
-        averages.put(Direction.NORTH, null);
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                6.5,
-                finalQueues(),
-                averages,
-                maximumQueues()));
-
-        averages.put(Direction.NORTH, -1.0);
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                6.5,
-                finalQueues(),
-                averages,
-                maximumQueues()));
-
-        Map<Direction, Integer> maxima = maximumQueues();
-
-        maxima.put(Direction.NORTH, null);
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                6.5,
-                finalQueues(),
-                averageQueues(),
-                maxima));
-
-        maxima.put(Direction.NORTH, -1);
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                6.5,
-                finalQueues(),
-                averageQueues(),
-                maxima));
+        ReportInput input = populated();
+        input.averageWait = -1.0;
+        assertInvalidBuild(input);
+        input.averageWait = Double.NaN;
+        assertInvalidBuild(input);
+        input.averageWait = Double.POSITIVE_INFINITY;
+        assertInvalidBuild(input);
+        input.averageWait = Double.NEGATIVE_INFINITY;
+        assertInvalidBuild(input);
     }
 
 
     /**
-     * Tests rejection of NaN and infinity in average queue-length statistics.
+     * Rejects negative emergency arrival and completion counts.
      */
     @Test
-    public void testNonFiniteQueueAverage()
+    public void testNegativeEmergencyCounts()
     {
-        Map<Direction, Double> averages = averageQueues();
-
-        averages.put(Direction.NORTH, Double.NaN);
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                6.5,
-                finalQueues(),
-                averages,
-                maximumQueues()));
-
-        averages.put(Direction.NORTH, Double.POSITIVE_INFINITY);
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                6.5,
-                finalQueues(),
-                averages,
-                maximumQueues()));
+        ReportInput input = populated();
+        input.emergencyArrived = -1;
+        assertInvalidBuild(input);
+        input.emergencyArrived = 6;
+        input.emergencyCompleted = -1;
+        assertInvalidBuild(input);
     }
 
 
     /**
-     * Tests that a maximum queue length cannot be smaller than the final queue
-     * length.
+     * Rejects emergency arrivals exceeding all arrivals.
      */
     @Test
-    public void testMaximumBelowFinal()
+    public void testEmergencyArrivalsCannotExceedTotalArrivals()
     {
-        Map<Direction, Integer> maxima = maximumQueues();
-        maxima.put(Direction.NORTH, 1);
-
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                6.5,
-                finalQueues(),
-                averageQueues(),
-                maxima));
+        ReportInput input = populated();
+        input.emergencyArrived = 21;
+        assertInvalidBuild(input);
     }
 
 
     /**
-     * Tests that an average queue length cannot exceed its maximum observed
-     * length.
+     * Rejects emergency completions exceeding recorded emergency arrivals.
      */
     @Test
-    public void testAverageAboveMaximum()
+    public void testEmergencyCompletionsCannotExceedEmergencyArrivals()
     {
-        Map<Direction, Double> averages = averageQueues();
-        averages.put(Direction.NORTH, 3.5);
+        ReportInput input = populated();
+        input.emergencyCompleted = 7;
+        assertInvalidBuild(input);
+    }
 
-        assertInvalid(
-            () -> new SimulationResults(
-                60,
-                20,
-                12,
-                2,
-                6.5,
-                finalQueues(),
-                averages,
-                maximumQueues()));
+
+    /**
+     * Rejects emergency completions exceeding all completed vehicles.
+     */
+    @Test
+    public void testEmergencyCompletionsCannotExceedTotalCompletions()
+    {
+        ReportInput input = populated();
+        input.emergencyCompleted = 6;
+        input.completed = 5;
+        input.finalQueues = ints(6, 4, 2, 1);
+        input.maximumQueues = ints(6, 4, 2, 2);
+        assertInvalidBuild(input);
+    }
+
+
+    /**
+     * Rejects impossible normal-vehicle completion totals even when emergency
+     * arrivals and completions each appear individually valid.
+     */
+    @Test
+    public void testNormalCompletionsCannotExceedNormalArrivals()
+    {
+        ReportInput input = populated();
+        input.emergencyArrived = 15;
+        input.emergencyCompleted = 4;
+        // Normal arrivals = 5, normal completed = 7.
+        assertInvalidBuild(input);
+    }
+
+
+    /**
+     * Rejects a missing average when at least one emergency completed.
+     */
+    @Test
+    public void testMissingEmergencyAverageRejected()
+    {
+        ReportInput input = populated();
+        input.emergencyAverageWait = null;
+        assertInvalidBuild(input);
+    }
+
+
+    /**
+     * Rejects a defined emergency average when none completed.
+     */
+    @Test
+    public void testUnexpectedEmergencyAverageRejected()
+    {
+        ReportInput input = populated();
+        input.emergencyCompleted = 0;
+        input.emergencyAverageWait = 0.0;
+        assertInvalidBuild(input);
+    }
+
+
+    /**
+     * Rejects negative, NaN, and infinite emergency waiting-time averages.
+     */
+    @Test
+    public void testInvalidEmergencyAverages()
+    {
+        ReportInput input = populated();
+        input.emergencyAverageWait = -0.1;
+        assertInvalidBuild(input);
+        input.emergencyAverageWait = Double.NaN;
+        assertInvalidBuild(input);
+        input.emergencyAverageWait = Double.POSITIVE_INFINITY;
+        assertInvalidBuild(input);
+        input.emergencyAverageWait = Double.NEGATIVE_INFINITY;
+        assertInvalidBuild(input);
+    }
+
+
+    /**
+     * Accepts a zero-second waiting average for completed vehicles.
+     */
+    @Test
+    public void testZeroWaitingAveragesAccepted()
+    {
+        ReportInput input = populated();
+        input.averageWait = 0.0;
+        input.emergencyAverageWait = 0.0;
+        assertEquals(0.0, input.build().getAverageWaitingTimeSeconds(), 0.0);
+        assertEquals(
+            0.0,
+            input.build().getAverageEmergencyWaitingTimeSeconds(),
+            0.0);
+    }
+
+
+    /**
+     * Rejects negative accident and slowdown counts independently.
+     */
+    @Test
+    public void testNegativeIncidentCounts()
+    {
+        ReportInput input = populated();
+        input.accidents = -1;
+        assertInvalidBuild(input);
+        input.accidents = 2;
+        input.slowdowns = -1;
+        assertInvalidBuild(input);
+    }
+
+
+    /**
+     * Rejects negative or impossibly large numbers of phase switches.
+     */
+    @Test
+    public void testInvalidPhaseSwitchCounts()
+    {
+        ReportInput input = populated();
+        input.switches = -1;
+        assertInvalidBuild(input);
+        input.switches = 121;
+        assertInvalidBuild(input);
+    }
+
+
+    /**
+     * Accepts both zero and the conservative upper bound on phase switches.
+     */
+    @Test
+    public void testPhaseSwitchCountBoundaries()
+    {
+        ReportInput input = populated();
+        input.switches = 0;
+        assertEquals(0, input.build().getPhaseSwitchCount());
+        input.switches = 120;
+        assertEquals(120, input.build().getPhaseSwitchCount());
+    }
+
+
+    /**
+     * Rejects a null value for each required statistics map.
+     */
+    @Test
+    public void testNullQueueMaps()
+    {
+        ReportInput input = populated();
+        input.finalQueues = null;
+        assertInvalidBuild(input);
+        input = populated();
+        input.averageQueues = null;
+        assertInvalidBuild(input);
+        input = populated();
+        input.maximumQueues = null;
+        assertInvalidBuild(input);
+    }
+
+
+    /**
+     * Rejects missing direction entries in any of the queue maps.
+     */
+    @Test
+    public void testMissingQueueMapDirections()
+    {
+        ReportInput input = populated();
+        input.finalQueues.remove(Direction.WEST);
+        assertInvalidBuild(input);
+        input = populated();
+        input.averageQueues.remove(Direction.WEST);
+        assertInvalidBuild(input);
+        input = populated();
+        input.maximumQueues.remove(Direction.WEST);
+        assertInvalidBuild(input);
+    }
+
+
+    /**
+     * Rejects extra keys in all queue maps, including null HashMap keys.
+     */
+    @Test
+    public void testExtraQueueMapKeys()
+    {
+        ReportInput input = populated();
+        input.finalQueues = new HashMap<>(input.finalQueues);
+        input.finalQueues.put(null, 0);
+        assertInvalidBuild(input);
+        input = populated();
+        input.averageQueues = new HashMap<>(input.averageQueues);
+        input.averageQueues.put(null, 0.0);
+        assertInvalidBuild(input);
+        input = populated();
+        input.maximumQueues = new HashMap<>(input.maximumQueues);
+        input.maximumQueues.put(null, 0);
+        assertInvalidBuild(input);
+    }
+
+
+    /**
+     * Rejects missing numeric entries in otherwise complete maps.
+     */
+    @Test
+    public void testNullQueueValues()
+    {
+        ReportInput input = populated();
+        input.finalQueues.put(Direction.NORTH, null);
+        assertInvalidBuild(input);
+        input = populated();
+        input.averageQueues.put(Direction.NORTH, null);
+        assertInvalidBuild(input);
+        input = populated();
+        input.maximumQueues.put(Direction.NORTH, null);
+        assertInvalidBuild(input);
+    }
+
+
+    /**
+     * Rejects negative final, mean, and maximum queue measurements.
+     */
+    @Test
+    public void testNegativeQueueStatistics()
+    {
+        ReportInput input = populated();
+        input.finalQueues.put(Direction.NORTH, -1);
+        assertInvalidBuild(input);
+        input = populated();
+        input.averageQueues.put(Direction.NORTH, -0.1);
+        assertInvalidBuild(input);
+        input = populated();
+        input.maximumQueues.put(Direction.NORTH, -1);
+        assertInvalidBuild(input);
+    }
+
+
+    /**
+     * Rejects NaN or infinite mean queue lengths on any approach.
+     */
+    @Test
+    public void testNonfiniteQueueAverages()
+    {
+        ReportInput input = populated();
+        input.averageQueues.put(Direction.EAST, Double.NaN);
+        assertInvalidBuild(input);
+        input.averageQueues.put(Direction.EAST, Double.POSITIVE_INFINITY);
+        assertInvalidBuild(input);
+        input.averageQueues.put(Direction.EAST, Double.NEGATIVE_INFINITY);
+        assertInvalidBuild(input);
+    }
+
+
+    /**
+     * Rejects a final queue length larger than the reported maximum.
+     */
+    @Test
+    public void testFinalQueueCannotExceedMaximum()
+    {
+        ReportInput input = populated();
+        input.maximumQueues.put(Direction.NORTH, 2);
+        assertInvalidBuild(input);
+    }
+
+
+    /**
+     * Rejects average queue lengths larger than the observed maximum.
+     */
+    @Test
+    public void testAverageQueueCannotExceedMaximum()
+    {
+        ReportInput input = populated();
+        input.averageQueues.put(Direction.NORTH, 4.1);
+        assertInvalidBuild(input);
+    }
+
+
+    /**
+     * Tests exact agreement between averages and maximum queue lengths.
+     */
+    @Test
+    public void testQueueAverageEqualToMaximumAllowed()
+    {
+        ReportInput input = populated();
+        input.averageQueues.put(Direction.NORTH, 4.0);
+        assertEquals(
+            4.0,
+            input.build().getAverageQueueLength(Direction.NORTH),
+            0.0);
+    }
+
+
+    /**
+     * Confirms that modifications to caller-owned maps cannot alter results.
+     */
+    @Test
+    public void testInputMapsDefensivelyCopied()
+    {
+        ReportInput input = populated();
+        SimulationResults result = input.build();
+        input.finalQueues.put(Direction.NORTH, 999);
+        input.averageQueues.put(Direction.NORTH, 99.0);
+        input.maximumQueues.put(Direction.NORTH, 999);
+        assertEquals(3, result.getFinalQueueLength(Direction.NORTH));
+        assertEquals(1.5, result.getAverageQueueLength(Direction.NORTH), 0.0);
+        assertEquals(4, result.getMaximumQueueLength(Direction.NORTH));
+    }
+
+
+    /**
+     * Confirms all three returned queue maps reject mutation.
+     */
+    @Test
+    public void testReturnedMapsUnmodifiable()
+    {
+        SimulationResults result = populated().build();
+        try
+        {
+            result.getFinalQueueLengths().clear();
+            fail("Expected unmodifiable final queue map.");
+        }
+        catch (UnsupportedOperationException expected)
+        {
+            // Unmodifiable as required.
+        }
+        try
+        {
+            result.getAverageQueueLengths().put(Direction.NORTH, 9.0);
+            fail("Expected unmodifiable average queue map.");
+        }
+        catch (UnsupportedOperationException expected)
+        {
+            // Unmodifiable as required.
+        }
+        try
+        {
+            result.getMaximumQueueLengths().remove(Direction.WEST);
+            fail("Expected unmodifiable maximum queue map.");
+        }
+        catch (UnsupportedOperationException expected)
+        {
+            // Unmodifiable as required.
+        }
+        assertEquals(3, result.getFinalQueueLength(Direction.NORTH));
+    }
+
+
+    /**
+     * Ensures all direction-specific query methods reject null directions.
+     */
+    @Test
+    public void testNullDirectionQueries()
+    {
+        SimulationResults result = populated().build();
+        assertInvalid(() -> result.getFinalQueueLength(null));
+        assertInvalid(() -> result.getAverageQueueLength(null));
+        assertInvalid(() -> result.getMaximumQueueLength(null));
+    }
+
+
+    /**
+     * Confirms two reports retain independent counts, means, and queues.
+     */
+    @Test
+    public void testIndependentResults()
+    {
+        SimulationResults populatedResult = populated().build();
+        SimulationResults emptyResult = empty().build();
+        assertEquals(6, populatedResult.getTotalEmergencyArrived());
+        assertEquals(0, emptyResult.getTotalEmergencyArrived());
+        assertEquals(2, populatedResult.getTotalAccidents());
+        assertEquals(0, emptyResult.getTotalAccidents());
+        assertEquals(3, populatedResult.getFinalQueueLength(Direction.NORTH));
+        assertEquals(0, emptyResult.getFinalQueueLength(Direction.NORTH));
     }
 }

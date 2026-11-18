@@ -1,3 +1,4 @@
+
 package defaultPackage;
 
 import java.util.Collections;
@@ -5,45 +6,65 @@ import java.util.EnumMap;
 import java.util.Map;
 
 /**
- * Immutable summary of the intersection at one simulation instant. Contains
- * traffic signal status, queue lengths, and vehicle counts. The snapshot does
- * not expose mutable model objects.
+ * Immutable read-only description of the intersection at a simulation boundary.
+ * Contains the most recently applied signal phase, all waiting queues
+ * (including emergency subsets), active traffic incidents, and vehicle
+ * accounting. No mutable model objects are exposed. Elapsed time counts
+ * completed one-second simulation steps. Signal timing describes the most
+ * recently applied signal phase. Incidents are reported only when active at
+ * elapsedSeconds, using [startSecond, endSecond).
  */
-public class SimulationSnapshot
+public final class SimulationSnapshot
 {
 
     private final int elapsedSeconds;
     private final SignalPhase signalPhase;
+    private final int phaseStartSecond;
+    private final int phaseSwitchCount;
     private final Map<Direction, Integer> queueLengths;
-
+    private final Map<Direction, Integer> emergencyQueueLengths;
+    private final Map<Direction, TrafficEvent> activeEvents;
     private final int totalArrived;
     private final int totalCompleted;
     private final int crossingCount;
     private final int waitingCount;
+    private final int emergencyWaitingCount;
 
     /**
-     * Creates a read-only snapshot of an intersection. Vehicle counts must obey
-     * conservation: arrived = waiting + crossing + completed.
+     * Creates a validated snapshot at a simulation boundary.
      *
      * @param elapsedSeconds
-     *            completed simulation steps
+     *            number of one-second steps completed
      * @param signalPhase
-     *            active phase at this time
+     *            most recently applied signal phase
+     * @param phaseStartSecond
+     *            time when that phase began
+     * @param phaseSwitchCount
+     *            total number of signal phase switches
      * @param queueLengths
-     *            waiting vehicles in each approach
+     *            waiting vehicles for every incoming direction
+     * @param emergencyQueueLengths
+     *            emergency subset for every direction
+     * @param activeEvents
+     *            incidents active at elapsedSeconds, keyed by approach
      * @param totalArrived
-     *            all generated vehicles
+     *            total generated vehicles, including emergencies
      * @param totalCompleted
-     *            vehicles that finished crossing
+     *            completed vehicles, including emergencies
      * @param crossingCount
      *            vehicles currently crossing
      * @throws IllegalArgumentException
-     *             for null, incomplete, negative, or inconsistent snapshot data
+     *             if data is null, incomplete, negative, inconsistent, or
+     *             includes inactive events
      */
     public SimulationSnapshot(
         int elapsedSeconds,
         SignalPhase signalPhase,
+        int phaseStartSecond,
+        int phaseSwitchCount,
         Map<Direction, Integer> queueLengths,
+        Map<Direction, Integer> emergencyQueueLengths,
+        Map<Direction, TrafficEvent> activeEvents,
         int totalArrived,
         int totalCompleted,
         int crossingCount)
@@ -54,67 +75,108 @@ public class SimulationSnapshot
             throw new IllegalArgumentException(
                 "Elapsed time cannot be negative.");
         }
-
         if (signalPhase == null)
         {
             throw new IllegalArgumentException("Signal phase cannot be null.");
         }
-
-        if (queueLengths == null
-            || queueLengths.size() != Direction.values().length)
+        if (phaseStartSecond < 0 || phaseStartSecond > elapsedSeconds)
         {
             throw new IllegalArgumentException(
-                "Queue lengths must include all four approaches.");
+                "Phase start must lie between zero and elapsed time.");
         }
-
+        if (phaseSwitchCount < 0)
+        {
+            throw new IllegalArgumentException(
+                "Phase switch count cannot be negative.");
+        }
         if (totalArrived < 0 || totalCompleted < 0 || crossingCount < 0)
         {
             throw new IllegalArgumentException(
                 "Vehicle counts cannot be negative.");
         }
+        if (queueLengths == null
+            || queueLengths.size() != Direction.values().length
+            || emergencyQueueLengths == null
+            || emergencyQueueLengths.size() != Direction.values().length)
+        {
+            throw new IllegalArgumentException(
+                "Both queue maps must contain exactly four directions.");
+        }
+        if (activeEvents == null)
+        {
+            throw new IllegalArgumentException(
+                "Active incident map cannot be null.");
+        }
 
-        // Copy and validate the queue lengths.
-        EnumMap<Direction, Integer> copy = new EnumMap<>(Direction.class);
-
-        long sumWaiting = 0L;
+        EnumMap<Direction, Integer> queues = new EnumMap<>(Direction.class);
+        EnumMap<Direction, Integer> emergencyQueues =
+            new EnumMap<>(Direction.class);
+        long waiting = 0L;
+        long emergencyWaiting = 0L;
 
         for (Direction direction : Direction.values())
         {
             Integer count = queueLengths.get(direction);
-
+            Integer emergencyCount = emergencyQueueLengths.get(direction);
             if (count == null || count < 0)
             {
                 throw new IllegalArgumentException(
-                    "Invalid queue length for " + direction + ".");
+                    "Invalid waiting queue for " + direction + ".");
             }
-
-            copy.put(direction, count);
-            sumWaiting += count;
+            if (emergencyCount == null || emergencyCount < 0
+                || emergencyCount > count)
+            {
+                throw new IllegalArgumentException(
+                    "Invalid emergency queue for " + direction + ".");
+            }
+            queues.put(direction, count);
+            emergencyQueues.put(direction, emergencyCount);
+            waiting += count;
+            emergencyWaiting += emergencyCount;
         }
 
-        // Verify conservation of vehicles.
-        if (sumWaiting + (long)crossingCount + totalCompleted != totalArrived)
+        // Use long arithmetic to avoid overflow before comparing totals.
+        if (waiting + (long)crossingCount + totalCompleted != totalArrived)
         {
             throw new IllegalArgumentException(
                 "Arrived must equal waiting + crossing + completed.");
         }
 
-        // Store the validated state.
+        EnumMap<Direction, TrafficEvent> incidents =
+            new EnumMap<>(Direction.class);
+        for (Map.Entry<Direction, TrafficEvent> entry : activeEvents.entrySet())
+        {
+            Direction direction = entry.getKey();
+            TrafficEvent event = entry.getValue();
+            if (direction == null || event == null
+                || event.getApproach() != direction
+                || !event.isActiveAt(elapsedSeconds))
+            {
+                throw new IllegalArgumentException(
+                    "Incident must match its direction and be active at "
+                        + "the snapshot time.");
+            }
+            incidents.put(direction, event);
+        }
+
         this.elapsedSeconds = elapsedSeconds;
         this.signalPhase = signalPhase;
-        this.queueLengths = Collections.unmodifiableMap(copy);
-
+        this.phaseStartSecond = phaseStartSecond;
+        this.phaseSwitchCount = phaseSwitchCount;
+        this.queueLengths = Collections.unmodifiableMap(queues);
+        this.emergencyQueueLengths =
+            Collections.unmodifiableMap(emergencyQueues);
+        this.activeEvents = Collections.unmodifiableMap(incidents);
         this.totalArrived = totalArrived;
         this.totalCompleted = totalCompleted;
         this.crossingCount = crossingCount;
-        this.waitingCount = (int)sumWaiting;
+        this.waitingCount = (int)waiting;
+        this.emergencyWaitingCount = (int)emergencyWaiting;
     }
 
 
     /**
-     * Returns the number of completed simulation steps.
-     *
-     * @return elapsed simulated seconds
+     * @return total number of completed one-second simulation steps
      */
     public int getElapsedSeconds()
     {
@@ -123,9 +185,7 @@ public class SimulationSnapshot
 
 
     /**
-     * Returns the active traffic signal phase.
-     *
-     * @return current signal phase
+     * @return most recently applied NS_GREEN or EW_GREEN phase
      */
     public SignalPhase getSignalPhase()
     {
@@ -134,9 +194,37 @@ public class SimulationSnapshot
 
 
     /**
-     * Returns a read-only map of waiting vehicles for each incoming approach.
+     * @return simulated second at which the current phase started
+     */
+    public int getPhaseStartSecond()
+    {
+        return phaseStartSecond;
+    }
+
+
+    /**
+     * Returns elapsed time since the current phase began, measured at this
+     * snapshot's simulation boundary.
      *
-     * @return unmodifiable queue-length map
+     * @return elapsed phase duration in simulated seconds
+     */
+    public int getPhaseElapsedSeconds()
+    {
+        return elapsedSeconds - phaseStartSecond;
+    }
+
+
+    /**
+     * @return number of phase switches recorded so far
+     */
+    public int getPhaseSwitchCount()
+    {
+        return phaseSwitchCount;
+    }
+
+
+    /**
+     * @return unmodifiable waiting queue counts for all four directions
      */
     public Map<Direction, Integer> getQueueLengths()
     {
@@ -145,31 +233,105 @@ public class SimulationSnapshot
 
 
     /**
-     * Returns the queue length of a specified approach.
+     * Returns the waiting queue length for one incoming direction.
      *
      * @param direction
-     *            incoming traffic direction
+     *            approach to inspect
      * @return number of waiting vehicles
      * @throws IllegalArgumentException
      *             if direction is null
      */
     public int getQueueLength(Direction direction)
     {
-
-        if (direction == null)
-        {
-            throw new IllegalArgumentException("Direction cannot be null.");
-        }
-
+        requireDirection(direction);
         return queueLengths.get(direction);
     }
 
 
     /**
-     * Returns the total number of vehicles generated since the beginning of the
-     * simulation.
+     * @return unmodifiable emergency waiting counts for all four directions
+     */
+    public Map<Direction, Integer> getEmergencyQueueLengths()
+    {
+        return emergencyQueueLengths;
+    }
+
+
+    /**
+     * Returns emergency vehicles still waiting in an approach's FIFO queue.
      *
-     * @return total arrived vehicles
+     * @param direction
+     *            approach to inspect
+     * @return waiting emergency vehicle count
+     * @throws IllegalArgumentException
+     *             if direction is null
+     */
+    public int getEmergencyQueueLength(Direction direction)
+    {
+        requireDirection(direction);
+        return emergencyQueueLengths.get(direction);
+    }
+
+
+    /**
+     * @return unmodifiable map of active events, omitting unaffected directions
+     */
+    public Map<Direction, TrafficEvent> getActiveEvents()
+    {
+        return activeEvents;
+    }
+
+
+    /**
+     * Returns the active event affecting a direction, if any.
+     *
+     * @param direction
+     *            approach to inspect
+     * @return active accident or slowdown, or null if none
+     * @throws IllegalArgumentException
+     *             if direction is null
+     */
+    public TrafficEvent getActiveEvent(Direction direction)
+    {
+        requireDirection(direction);
+        return activeEvents.get(direction);
+    }
+
+
+    /**
+     * Returns the incident classification without exposing a nullable value.
+     *
+     * @param direction
+     *            approach to inspect
+     * @return ACCIDENT, SLOWDOWN, or NONE
+     * @throws IllegalArgumentException
+     *             if direction is null
+     */
+    public TrafficEventType getActiveIncidentType(Direction direction)
+    {
+        TrafficEvent event = getActiveEvent(direction);
+        return event == null ? TrafficEventType.NONE : event.getType();
+    }
+
+
+    /**
+     * Returns time remaining before an incident expires at this snapshot.
+     *
+     * @param direction
+     *            approach to inspect
+     * @return remaining simulated seconds, or zero if no incident is active
+     * @throws IllegalArgumentException
+     *             if direction is null
+     */
+    public int getRemainingIncidentSeconds(Direction direction)
+    {
+        TrafficEvent event = getActiveEvent(direction);
+        return event == null ? 0 : event.getEndSecond() - elapsedSeconds;
+    }
+
+
+    /**
+     * @return total generated vehicles, including emergency vehicles
      */
     public int getTotalArrived()
     {
@@ -178,10 +340,7 @@ public class SimulationSnapshot
 
 
     /**
-     * Returns the number of vehicles that have completed their intersection
-     * crossing.
-     *
-     * @return total completed vehicles
+     * @return number of vehicles that have completed crossing
      */
     public int getTotalCompleted()
     {
@@ -190,9 +349,7 @@ public class SimulationSnapshot
 
 
     /**
-     * Returns the number of vehicles currently moving through the intersection.
-     *
-     * @return crossing vehicle count
+     * @return number of vehicles currently crossing the intersection
      */
     public int getCrossingCount()
     {
@@ -201,12 +358,36 @@ public class SimulationSnapshot
 
 
     /**
-     * Returns the total number of vehicles waiting in the four approach queues.
-     *
-     * @return total queued vehicles
+     * @return total number of waiting vehicles across all four approaches
      */
     public int getWaitingCount()
     {
         return waitingCount;
+    }
+
+
+    /**
+     * @return total waiting emergency vehicles across all approaches
+     */
+    public int getEmergencyWaitingCount()
+    {
+        return emergencyWaitingCount;
+    }
+
+
+    /**
+     * Validates a direction used by a per-approach getter.
+     *
+     * @param direction
+     *            direction to validate
+     * @throws IllegalArgumentException
+     *             if direction is null
+     */
+    private static void requireDirection(Direction direction)
+    {
+        if (direction == null)
+        {
+            throw new IllegalArgumentException("Direction cannot be null.");
+        }
     }
 }
