@@ -233,13 +233,13 @@ This table covers **each production class and test file in the D4 V2 class inven
 
 | Class or test file | Person(s) / assistance | Work performed for Deliverable 4 |
 |---|---|---|
-| `Direction.java` | D3 retained; Ethan checked compatibility | Kept four-direction enum used throughout the V2 model |
-| `Turn.java` | D3 retained; Ethan checked compatibility | Retained existing turn enum for randomized turn choices |
-| `SignalPhase.java` | D3 retained; Ethan checked compatibility | Retained NS/EW phase labels for adaptive controller |
-| `VehicleState.java` | D3 retained; Ethan checked compatibility | Retained WAITING/CROSSING/DONE lifecycle labels |
+| `Direction.java` | D3 retained | Kept four-direction enum used throughout the V2 model |
+| `Turn.java` | D3 retained | Retained existing turn enum for randomized turn choices |
+| `SignalPhase.java` | D3 retained | Retained NS/EW phase labels for adaptive controller |
+| `VehicleState.java` | D3 retained | Retained WAITING/CROSSING/DONE lifecycle labels |
 | `VehicleType.java` | Ethan | Introduced NORMAL/EMERGENCY classification |
 | `TrafficEventType.java` | Ethan | Introduced NONE/ACCIDENT/SLOWDOWN classifications |
-| `LinkedQueue.java` | D3 retained; Ethan checked compatibility | Original singly linked FIFO queue unchanged |
+| `LinkedQueue.java` | D3 retained | Original singly linked FIFO queue unchanged |
 | `LinkedQueueTest.java` | Timothy | Reworked JUnit 4 suite with invalid operations, interleaved FIFO order, reuse, and stress cases |
 | `Vehicle.java` | Xinchen | Extended type, crossing progress, movement, and state transitions |
 | `VehicleTest.java` | Xinchen | Added vehicle-type, lifecycle, boundary, and invalid-input tests |
@@ -269,7 +269,7 @@ This table covers **each production class and test file in the D4 V2 class inven
 | `TerminalViewTest.java` | Timothy | Verified output, null cases, incident/queue tables, comparisons, and locale formatting |
 | `SimulationModelDriver.java` | Timothy | Updated standalone model demonstration, seeded scenario, and conservation checks |
 | `SimulationModelDriverTest.java` | Ethan | Tested standalone execution, exact output, seeded reproducibility, and conservation |
-| `Main.java` | D3 retained; Ethan checked compatibility | Existing interactive application entry point unchanged |
+| `Main.java` | D3 retained | Existing interactive application entry point unchanged |
 
 
 ### GenAI Attribution
