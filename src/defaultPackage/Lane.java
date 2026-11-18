@@ -1,246 +1,271 @@
+
 package defaultPackage;
 
+import java.util.Random;
+
 /**
- * Represents one incoming lane at the intersection. Each lane maintains a FIFO
- * vehicle queue, generates vehicles at a deterministic arrival rate, assigns
- * turning movements, and controls departure headway. Traffic signal decisions
- * and global vehicle IDs are managed externally by SimulationModel.
+ * Models one incoming approach to the four-way intersection. Each lane owns a
+ * FIFO queue, generates vehicles at a deterministic arrival rate, assigns
+ * independent random turns and emergency classifications, and enforces
+ * departure headway. Signal and incident decisions belong to the surrounding
+ * simulation model, not the lane.
  */
 public class Lane
 {
 
+    /** Normal minimum interval between successive lane departures. */
     public static final int DEPARTURE_HEADWAY_SECONDS = 2;
 
     private static final int SECONDS_PER_HOUR = 3600;
-    private static final int TOTAL_PERCENT = 100;
+    private static final int MAX_PERCENT = 100;
+    private static final int MAX_HEADWAY_SECONDS = 20;
 
-    // Fixed lane configuration
     private final Direction approach;
     private final int arrivalRatePerHour;
     private final int leftTurnPercent;
     private final int uTurnPercent;
-
-    // Vehicle queue
+    private final int emergencyVehiclePercent;
     private final LinkedQueue<Vehicle> waitingVehicles;
+    private final Random turnRandom;
+    private final Random emergencyRandom;
 
-    // Arrival and turning accumulators
     private long arrivalCreditUnits;
-    private int straightTurnCredit;
-    private int leftTurnCredit;
-    private int uTurnCredit;
-
-    // Departure and arrival timing
-    private int nextReleaseSecond;
     private int lastGeneratedSecond;
+    private int lastReleaseSecond;
+    private int emergencyWaitingCount;
+    private int totalEmergencyGenerated;
 
     /**
-     * Constructs an empty lane with the specified traffic configuration.
+     * Creates an initially empty approach lane with independent random sources.
+     * The caller should supply separately seeded generators for turn selection
+     * and emergency classification to make runs reproducible.
      *
      * @param approach
-     *            direction vehicles arrive from
+     *            incoming approach, not null
      * @param arrivalRatePerHour
-     *            vehicles arriving per hour
+     *            arrivals per hour, between 0 and 1800
      * @param leftTurnPercent
-     *            percentage turning left
+     *            probability of a left turn, between 0 and 100
      * @param uTurnPercent
-     *            percentage making U-turns
+     *            probability of a U-turn, between 0 and 100
+     * @param emergencyVehiclePercent
+     *            probability of an emergency vehicle
+     * @param turnRandom
+     *            random source used only for turning decisions
+     * @param emergencyRandom
+     *            random source used only for vehicle classification
      * @throws IllegalArgumentException
-     *             if any configuration parameter is invalid
+     *             if a parameter is invalid
      */
     public Lane(
         Direction approach,
         int arrivalRatePerHour,
         int leftTurnPercent,
-        int uTurnPercent)
+        int uTurnPercent,
+        int emergencyVehiclePercent,
+        Random turnRandom,
+        Random emergencyRandom)
     {
-
         if (approach == null)
         {
             throw new IllegalArgumentException("Approach cannot be null.");
         }
-
         if (arrivalRatePerHour < SimulationConfig.MIN_ARRIVAL_RATE
             || arrivalRatePerHour > SimulationConfig.MAX_ARRIVAL_RATE)
         {
             throw new IllegalArgumentException("Arrival rate is out of range.");
         }
-
-        if (leftTurnPercent < SimulationConfig.MIN_TURN_PERCENT
-            || leftTurnPercent > SimulationConfig.MAX_TURN_PERCENT
-            || uTurnPercent < SimulationConfig.MIN_TURN_PERCENT
-            || uTurnPercent > SimulationConfig.MAX_TURN_PERCENT
-            || leftTurnPercent + uTurnPercent > TOTAL_PERCENT)
+        if (leftTurnPercent < 0 || leftTurnPercent > MAX_PERCENT
+            || uTurnPercent < 0 || uTurnPercent > MAX_PERCENT
+            || leftTurnPercent + uTurnPercent > MAX_PERCENT)
         {
-            throw new IllegalArgumentException("Turn percentages are invalid.");
+            throw new IllegalArgumentException(
+                "Turn probabilities are invalid.");
+        }
+        if (emergencyVehiclePercent < 0
+            || emergencyVehiclePercent > MAX_PERCENT)
+        {
+            throw new IllegalArgumentException(
+                "Emergency vehicle probability must be between 0 and 100.");
+        }
+        if (turnRandom == null || emergencyRandom == null)
+        {
+            throw new IllegalArgumentException(
+                "Random sources cannot be null.");
         }
 
         this.approach = approach;
         this.arrivalRatePerHour = arrivalRatePerHour;
         this.leftTurnPercent = leftTurnPercent;
         this.uTurnPercent = uTurnPercent;
-
+        this.emergencyVehiclePercent = emergencyVehiclePercent;
+        this.turnRandom = turnRandom;
+        this.emergencyRandom = emergencyRandom;
         waitingVehicles = new LinkedQueue<>();
-
         arrivalCreditUnits = 0L;
-        straightTurnCredit = 0;
-        leftTurnCredit = 0;
-        uTurnCredit = 0;
-
-        nextReleaseSecond = 0;
         lastGeneratedSecond = -1;
+        lastReleaseSecond = -1;
+        emergencyWaitingCount = 0;
+        totalEmergencyGenerated = 0;
     }
 
 
     /**
-     * Generates any vehicles due during one simulated second and enqueues them
-     * in FIFO order. Calls must process steps 0, 1, 2, ... exactly once and in
-     * sequence. SimulationModel supplies the next globally unique vehicle ID
-     * and increments it by the returned count.
+     * Generates arrivals for exactly one consecutive simulated second.
+     * Fractional arrival credit is carried forward, so the average arrival rate
+     * is exact even though each step generates an integer number of cars. Each
+     * vehicle independently receives a random turn and classification.
      *
      * @param elapsedSecond
-     *            zero-based simulation step
+     *            next zero-based step (0, 1, 2, ...)
      * @param firstVehicleId
-     *            first ID available for arrivals
-     * @return number of vehicles generated during this step
+     *            first positive ID available for this step
+     * @return number of new vehicles enqueued
      * @throws IllegalArgumentException
-     *             if time, step order, or vehicle ID is invalid
+     *             if the step sequence or ID is invalid
      */
     public int generateArrivals(int elapsedSecond, long firstVehicleId)
     {
-
         if (elapsedSecond < 0
             || (long)elapsedSecond != (long)lastGeneratedSecond + 1L)
         {
             throw new IllegalArgumentException(
-                "Arrival steps must be processed once, "
-                    + "in order, starting at zero.");
+                "Arrival steps must start at zero and proceed in order.");
         }
-
-        if (firstVehicleId <= 0L)
+        if (firstVehicleId <= 0)
         {
             throw new IllegalArgumentException(
                 "First vehicle ID must be positive.");
         }
 
-        // Accumulate arrival rate over one second.
         long pendingCredit = arrivalCreditUnits + arrivalRatePerHour;
-
         int arrivals = (int)(pendingCredit / SECONDS_PER_HOUR);
-
-        // Prevent vehicle ID overflow.
         if (arrivals > 0 && firstVehicleId > Long.MAX_VALUE - (arrivals - 1L))
         {
             throw new IllegalArgumentException("Vehicle IDs would overflow.");
         }
 
-        // Create and enqueue new vehicles.
         for (int i = 0; i < arrivals; i++)
         {
-            Turn turn = assignTurn();
-
-            Vehicle vehicle =
-                new Vehicle(firstVehicleId + i, approach, turn, elapsedSecond);
-
+            Turn turn = assignRandomTurn();
+            VehicleType type = assignVehicleType();
+            Vehicle vehicle = new Vehicle(
+                firstVehicleId + i,
+                approach,
+                turn,
+                elapsedSecond,
+                type);
             waitingVehicles.enqueue(vehicle);
+            if (type == VehicleType.EMERGENCY)
+            {
+                emergencyWaitingCount++;
+                totalEmergencyGenerated++;
+            }
         }
 
-        // Preserve remaining fractional arrival credit.
         arrivalCreditUnits = pendingCredit % SECONDS_PER_HOUR;
-
         lastGeneratedSecond = elapsedSecond;
-
         return arrivals;
     }
 
 
     /**
-     * Releases the first waiting vehicle if its signal is green and departure
-     * headway permits. If release is not permitted, returns null without
-     * changing the queue.
+     * Releases the FIFO head if the model permits release and sufficient time
+     * has elapsed since the previous actual departure. A changed headway takes
+     * effect immediately, including when a slowdown starts or expires.
      *
      * @param currentSecond
-     *            current simulation second
-     * @param signalGreen
-     *            true if lane has green signal
-     * @return released vehicle, or null if none released
+     *            nonnegative simulated second
+     * @param canRelease
+     *            true only if signal and incident rules allow departure
+     * @param headwaySeconds
+     *            minimum seconds since the preceding lane departure, between 2
+     *            and 20 inclusive
+     * @return the vehicle entering the intersection, or null if unavailable
      * @throws IllegalArgumentException
-     *             if release time is invalid
+     *             if time or headway is invalid, or if a queued vehicle has not
+     *             yet arrived
      */
-    public Vehicle releaseNext(int currentSecond, boolean signalGreen)
+    public
+        Vehicle
+        releaseNext(int currentSecond, boolean canRelease, int headwaySeconds)
     {
-
         if (currentSecond < 0)
         {
-            throw new IllegalArgumentException("Time cannot be negative.");
+            throw new IllegalArgumentException(
+                "Release time cannot be negative.");
         }
-
-        // No departure during red or without vehicles.
-        if (!signalGreen || waitingVehicles.isEmpty()
-            || currentSecond < nextReleaseSecond)
+        if (headwaySeconds < DEPARTURE_HEADWAY_SECONDS
+            || headwaySeconds > MAX_HEADWAY_SECONDS)
+        {
+            throw new IllegalArgumentException(
+                "Departure headway must be between 2 and 20 seconds.");
+        }
+        if (!canRelease || waitingVehicles.isEmpty())
+        {
+            return null;
+        }
+        if (lastReleaseSecond >= 0
+            && (long)currentSecond - lastReleaseSecond < headwaySeconds)
         {
             return null;
         }
 
         Vehicle vehicle = waitingVehicles.peek();
-
-        if (currentSecond < vehicle.getArrivalSecond()
-            || currentSecond > Integer.MAX_VALUE - DEPARTURE_HEADWAY_SECONDS)
+        if (currentSecond < vehicle.getArrivalSecond())
         {
-            throw new IllegalArgumentException("Invalid release time.");
+            throw new IllegalArgumentException(
+                "Vehicle cannot depart before its arrival time.");
         }
 
-        // Transition the vehicle before removing it.
         vehicle.startCrossing(currentSecond);
-
         waitingVehicles.dequeue();
-
-        // Enforce minimum time before next departure.
-        nextReleaseSecond = currentSecond + DEPARTURE_HEADWAY_SECONDS;
-
+        lastReleaseSecond = currentSecond;
+        if (vehicle.getVehicleType() == VehicleType.EMERGENCY)
+        {
+            emergencyWaitingCount--;
+        }
         return vehicle;
     }
 
 
     /**
-     * Selects a deterministic turning movement using weighted credits for
-     * straight, left, and U-turns. The method distributes movements across
-     * arrivals while producing the exact configured percentages over each
-     * complete set of 100 generated vehicles.
+     * Assigns an independently sampled movement using integer percentages.
      *
-     * @return turning movement for the next vehicle
+     * @return the randomized turning movement
      */
-    private Turn assignTurn()
+    private Turn assignRandomTurn()
     {
-
-        straightTurnCredit += TOTAL_PERCENT - leftTurnPercent - uTurnPercent;
-
-        leftTurnCredit += leftTurnPercent;
-        uTurnCredit += uTurnPercent;
-
-        // Select movement with the greatest credit.
-        if (straightTurnCredit >= leftTurnCredit
-            && straightTurnCredit >= uTurnCredit)
+        int draw = turnRandom.nextInt(MAX_PERCENT);
+        if (draw < leftTurnPercent)
         {
-
-            straightTurnCredit -= TOTAL_PERCENT;
-            return Turn.STRAIGHT;
-        }
-
-        if (leftTurnCredit >= uTurnCredit)
-        {
-            leftTurnCredit -= TOTAL_PERCENT;
             return Turn.LEFT;
         }
-
-        uTurnCredit -= TOTAL_PERCENT;
-        return Turn.U_TURN;
+        if (draw < leftTurnPercent + uTurnPercent)
+        {
+            return Turn.U_TURN;
+        }
+        return Turn.STRAIGHT;
     }
 
 
     /**
-     * Returns the incoming approach direction.
+     * Assigns a vehicle type using its independent random-number source.
      *
-     * @return lane approach direction
+     * @return EMERGENCY with the configured probability; NORMAL otherwise
+     */
+    private VehicleType assignVehicleType()
+    {
+        return emergencyRandom.nextInt(MAX_PERCENT) < emergencyVehiclePercent
+            ? VehicleType.EMERGENCY
+            : VehicleType.NORMAL;
+    }
+
+
+    /**
+     * Returns the incoming direction represented by this lane.
+     *
+     * @return incoming approach direction
      */
     public Direction getApproach()
     {
@@ -249,9 +274,9 @@ public class Lane
 
 
     /**
-     * Returns the configured arrival rate.
+     * Returns the configured deterministic arrival rate.
      *
-     * @return vehicles per simulated hour
+     * @return arrivals per hour
      */
     public int getArrivalRatePerHour()
     {
@@ -260,13 +285,34 @@ public class Lane
 
 
     /**
-     * Returns the number of waiting vehicles. Does not include vehicles already
-     * crossing.
+     * Returns the number of vehicles currently waiting in FIFO order.
      *
-     * @return number of queued vehicles
+     * @return waiting queue length, excluding crossing vehicles
      */
     public int getQueueLength()
     {
         return waitingVehicles.size();
+    }
+
+
+    /**
+     * Returns the number of emergency vehicles still in the lane's queue.
+     *
+     * @return emergency vehicles waiting, excluding crossing vehicles
+     */
+    public int getEmergencyWaitingCount()
+    {
+        return emergencyWaitingCount;
+    }
+
+
+    /**
+     * Returns the cumulative number of emergency arrivals in this lane.
+     *
+     * @return emergency vehicles generated so far
+     */
+    public int getTotalEmergencyGenerated()
+    {
+        return totalEmergencyGenerated;
     }
 }
