@@ -199,7 +199,7 @@ The feature implementation is substantially complete. Remaining work is **verifi
 | 4 | Verify README commands, D3-vs-D4 reflection, source/test attribution with each contributor, and accurate AI disclosure; remove any unverified authorship claims | **Ethan** (README) + **all four members** (attribution approval) |
 | 5 | Rehearse the three-minute live demo, confirm the terminal scroll output is readable, and freeze the version used for submission | **Timothy** (demo coordination) + **Makayla** (presentation) + **Ethan** (driver/model) |
 
-### Stretch goals: Status and 
+### Stretch goals & Final Build Status
 
 | Goal | Decision | Rationale |
 |---|---|---|
