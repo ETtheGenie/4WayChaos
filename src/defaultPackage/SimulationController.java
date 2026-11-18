@@ -1,13 +1,14 @@
+
 package defaultPackage;
 
 import java.util.EnumMap;
 import java.util.Map;
 
 /**
- * Coordinates the 4WayChaos terminal application. Reads raw commands through
- * TerminalView, validates user input, creates configurations, runs
- * SimulationModel, and supplies immutable snapshots and results to the view. No
- * traffic or queue logic lives here.
+ * Coordinates the V2 4WayChaos terminal application. Collects and validates
+ * configuration input through TerminalView, constructs SimulationModel runs,
+ * and sends immutable snapshots and results to the view. Traffic rules remain
+ * entirely inside the model layer.
  */
 public class SimulationController
 {
@@ -15,7 +16,7 @@ public class SimulationController
     /** Maximum number of characters accepted in one input line. */
     private static final int MAX_INPUT_LENGTH = 80;
 
-    /** Number of completed simulation seconds between progress updates. */
+    /** Number of completed simulation seconds between periodic updates. */
     private static final int PROGRESS_INTERVAL_SECONDS = 60;
 
     private final TerminalView view;
@@ -27,10 +28,10 @@ public class SimulationController
     private boolean inputClosed;
 
     /**
-     * Constructs a controller using the provided presentation layer.
+     * Creates a controller for the supplied terminal presentation layer.
      *
      * @param view
-     *            terminal view for all application input and output
+     *            terminal view for input and output
      * @throws IllegalArgumentException
      *             if view is null
      */
@@ -41,32 +42,32 @@ public class SimulationController
             throw new IllegalArgumentException("View cannot be null.");
         }
         this.view = view;
-        this.activeModel = null;
-        this.nextConfig = null;
-        this.latestResults = null;
-        this.previousResults = null;
-        this.running = false;
-        this.inputClosed = false;
+        activeModel = null;
+        nextConfig = null;
+        latestResults = null;
+        previousResults = null;
+        running = false;
+        inputClosed = false;
     }
 
 
     /**
-     * Shows the main menu and processes commands until Exit or EOF. Invalid
-     * selections produce an error and allow another attempt. The controller
-     * never closes the view's input/output streams.
+     * Shows the five-option menu until the user selects Exit or reaches EOF.
+     * Invalid commands are rejected without terminating the application. This
+     * method does not close the view's streams.
      */
     public void launch()
     {
         while (!inputClosed)
         {
             view.showMenu();
-            String command = view.prompt("Select an option: ");
-            if (command == null)
+            String raw = view.prompt("Select an option: ");
+            if (raw == null)
             {
                 inputClosed = true;
-                break;
+                return;
             }
-            if (command.length() > MAX_INPUT_LENGTH)
+            if (raw.length() > MAX_INPUT_LENGTH)
             {
                 view.showError(
                     "Input must be at most " + MAX_INPUT_LENGTH
@@ -74,7 +75,7 @@ public class SimulationController
                 continue;
             }
 
-            switch (command.trim())
+            switch (raw.trim())
             {
                 case "1":
                     configureSimulation();
@@ -106,9 +107,10 @@ public class SimulationController
 
 
     /**
-     * Collects a complete configuration through validated integer prompts.
-     * Keeps the previous configuration until every field is valid. If input
-     * ends during setup, leaves the previous configuration unchanged.
+     * Interactively reads every V2 configuration field. Each numeric prompt
+     * repeats until valid or EOF. The existing configuration remains intact
+     * unless all fields have been entered successfully. Adaptive signals and
+     * random turning are the only supported traffic modes.
      */
     public void configureSimulation()
     {
@@ -136,24 +138,6 @@ public class SimulationController
             rates.put(direction, rate);
         }
 
-        Integer ns = readInteger(
-            "North-South green duration (seconds)",
-            SimulationConfig.MIN_GREEN_SECONDS,
-            SimulationConfig.MAX_GREEN_SECONDS);
-        if (ns == null)
-        {
-            return;
-        }
-
-        Integer ew = readInteger(
-            "East-West green duration (seconds)",
-            SimulationConfig.MIN_GREEN_SECONDS,
-            SimulationConfig.MAX_GREEN_SECONDS);
-        if (ew == null)
-        {
-            return;
-        }
-
         Integer duration = readInteger(
             "Simulation duration (seconds)",
             SimulationConfig.MIN_DURATION_SECONDS,
@@ -164,7 +148,7 @@ public class SimulationController
         }
 
         Integer left = readInteger(
-            "Left-turn percentage",
+            "Left-turn probability (%)",
             SimulationConfig.MIN_TURN_PERCENT,
             SimulationConfig.MAX_TURN_PERCENT);
         if (left == null)
@@ -172,9 +156,8 @@ public class SimulationController
             return;
         }
 
-        // Enforce the combined turning limit before creating the model object.
         Integer uTurn = readInteger(
-            "U-turn percentage",
+            "U-turn probability (%)",
             SimulationConfig.MIN_TURN_PERCENT,
             SimulationConfig.MAX_TURN_PERCENT - left);
         if (uTurn == null)
@@ -182,18 +165,121 @@ public class SimulationController
             return;
         }
 
-        // Commit atomically only after the entire configuration is valid.
+        Integer minGreen = readInteger(
+            "Minimum adaptive green (seconds)",
+            SimulationOptions.MIN_GREEN_SECONDS,
+            SimulationOptions.MAX_GREEN_SECONDS);
+        if (minGreen == null)
+        {
+            return;
+        }
+
+        Integer maxGreen = readInteger(
+            "Maximum adaptive green (seconds)",
+            minGreen,
+            SimulationOptions.MAX_GREEN_SECONDS);
+        if (maxGreen == null)
+        {
+            return;
+        }
+
+        Integer threshold =
+            readInteger("Queue-switch threshold (vehicles)", 1, 50);
+        if (threshold == null)
+        {
+            return;
+        }
+
+        Integer emergency =
+            readInteger("Emergency vehicle probability (%)", 0, 100);
+        if (emergency == null)
+        {
+            return;
+        }
+
+        Integer interval =
+            readInteger("Traffic-event check interval (seconds)", 10, 120);
+        if (interval == null)
+        {
+            return;
+        }
+
+        Integer accident =
+            readInteger("Accident probability per check (%)", 0, 100);
+        if (accident == null)
+        {
+            return;
+        }
+
+        Integer slowdown = readInteger(
+            "Slowdown probability per check (%)",
+            0,
+            100 - accident);
+        if (slowdown == null)
+        {
+            return;
+        }
+
+        Integer accidentDuration = readInteger(
+            "Accident duration (seconds)",
+            SimulationOptions.MIN_EVENT_DURATION_SECONDS,
+            SimulationOptions.MAX_EVENT_DURATION_SECONDS);
+        if (accidentDuration == null)
+        {
+            return;
+        }
+
+        Integer slowdownDuration = readInteger(
+            "Slowdown duration (seconds)",
+            SimulationOptions.MIN_EVENT_DURATION_SECONDS,
+            SimulationOptions.MAX_EVENT_DURATION_SECONDS);
+        if (slowdownDuration == null)
+        {
+            return;
+        }
+
+        Integer slowdownSpeed =
+            readInteger("Slowdown speed (meters/second)", 1, 9);
+        if (slowdownSpeed == null)
+        {
+            return;
+        }
+
+        Integer slowdownHeadway =
+            readInteger("Slowdown headway (seconds)", 2, 20);
+        if (slowdownHeadway == null)
+        {
+            return;
+        }
+
+        Long seed = readLong("Random seed");
+        if (seed == null)
+        {
+            return;
+        }
+
+        // Construct and commit only after ALL inputs have been validated.
+        SimulationOptions options = SimulationOptions.builder()
+            .minGreenSeconds(minGreen).maxGreenSeconds(maxGreen)
+            .queueSwitchThreshold(threshold).emergencyVehiclePercent(emergency)
+            .eventCheckIntervalSeconds(interval).accidentChancePercent(accident)
+            .slowdownChancePercent(slowdown)
+            .accidentDurationSeconds(accidentDuration)
+            .slowdownDurationSeconds(slowdownDuration)
+            .slowdownSpeedMetersPerSecond(slowdownSpeed)
+            .slowdownHeadwaySeconds(slowdownHeadway).randomSeed(seed).build();
+
         setConfiguration(
-            new SimulationConfig(rates, ns, ew, duration, left, uTurn));
+            new SimulationConfig(rates, duration, left, uTurn, options));
     }
 
 
     /**
-     * Selects a validated configuration for the next simulation run. A
-     * currently executing model continues using its existing settings.
+     * Selects a configuration for the next run. Updating it during an active
+     * run does not change the already constructed model for that run.
      *
      * @param config
-     *            immutable configuration for the next run
+     *            validated immutable configuration
      * @throws IllegalArgumentException
      *             if config is null
      */
@@ -208,10 +294,12 @@ public class SimulationController
 
 
     /**
-     * Runs a fresh model from the selected configuration. Displays the initial
-     * state, progress every 60 simulated seconds, and final results. A
-     * completed run becomes latestResults and displaces the prior latest into
-     * previousResults. Refuses unconfigured or overlapping runs.
+     * Runs a fresh model and publishes results only after successful
+     * completion. Shows the initial snapshot, each 60-second checkpoint, the
+     * final snapshot, and any intervening signal switch or incident
+     * start/expiration. This method refuses unconfigured or overlapping runs
+     * and resets the running guard even if output or model execution raises an
+     * exception.
      */
     public void runSimulation()
     {
@@ -229,24 +317,30 @@ public class SimulationController
         running = true;
         try
         {
-            // Capture this run's configuration; subsequent changes apply later.
             SimulationConfig selected = nextConfig;
             activeModel = new SimulationModel(selected);
-            view.showProgress(activeModel.getSnapshot());
+            SimulationSnapshot previous = activeModel.getSnapshot();
+            view.showProgress(previous);
 
             while (!activeModel.isComplete())
             {
                 activeModel.step();
-                SimulationSnapshot snapshot = activeModel.getSnapshot();
-                int second = snapshot.getElapsedSeconds();
+                SimulationSnapshot current = activeModel.getSnapshot();
+                int second = current.getElapsedSeconds();
+                boolean phaseChanged = current.getPhaseSwitchCount() != previous
+                    .getPhaseSwitchCount();
+                boolean incidentsChanged = !current.getActiveEvents()
+                    .equals(previous.getActiveEvents());
+
                 if (second % PROGRESS_INTERVAL_SECONDS == 0
-                    || activeModel.isComplete())
+                    || activeModel.isComplete() || phaseChanged
+                    || incidentsChanged)
                 {
-                    view.showProgress(snapshot);
+                    view.showProgress(current);
                 }
+                previous = current;
             }
 
-            // Publish new results only after successful model completion.
             SimulationResults finished = activeModel.getResults();
             previousResults = latestResults;
             latestResults = finished;
@@ -260,8 +354,8 @@ public class SimulationController
 
 
     /**
-     * Displays the two most recently completed simulation results. If fewer
-     * than two successful runs exist, displays an error instead.
+     * Displays the two most recently completed results, or explains why a
+     * comparison cannot yet be performed.
      */
     public void compareRuns()
     {
@@ -275,17 +369,17 @@ public class SimulationController
 
 
     /**
-     * Reads and validates one bounded integer. Rejects blank, nonnumeric,
-     * excessively long, or out-of-range input and re-prompts until valid.
-     * End-of-input is signaled by null, not by a fabricated default.
+     * Reads an inclusive-range integer, re-prompting on blank, oversized,
+     * nonnumeric, or out-of-range input. EOF closes further input and leaves
+     * the caller's in-progress configuration uncommitted.
      *
      * @param label
-     *            descriptive parameter name for the prompt
+     *            descriptive field name
      * @param minimum
-     *            minimum permitted integer (inclusive)
+     *            inclusive lower bound
      * @param maximum
-     *            maximum permitted integer (inclusive)
-     * @return validated integer, or null if input reaches EOF
+     *            inclusive upper bound
+     * @return validated integer, or null on EOF
      */
     private Integer readInteger(String label, int minimum, int maximum)
     {
@@ -324,11 +418,57 @@ public class SimulationController
                 }
                 return value;
             }
-            catch (NumberFormatException e)
+            catch (NumberFormatException exception)
             {
                 view.showError(
                     "Enter a whole number between " + minimum + " and "
                         + maximum + ".");
+            }
+        }
+        return null;
+    }
+
+
+    /**
+     * Reads a signed 64-bit random seed. Accepts negative and positive values,
+     * including Long.MIN_VALUE and Long.MAX_VALUE. Rejects blank, oversized,
+     * noninteger, and overflowing input, re-prompting until valid or EOF.
+     *
+     * @param label
+     *            descriptive field name
+     * @return validated seed, or null on EOF
+     */
+    private Long readLong(String label)
+    {
+        while (!inputClosed)
+        {
+            String raw = view.prompt(label + " [signed 64-bit integer]: ");
+            if (raw == null)
+            {
+                inputClosed = true;
+                return null;
+            }
+            if (raw.length() > MAX_INPUT_LENGTH)
+            {
+                view.showError(
+                    "Input must be at most " + MAX_INPUT_LENGTH
+                        + " characters.");
+                continue;
+            }
+            String trimmed = raw.trim();
+            if (trimmed.isEmpty())
+            {
+                view.showError(
+                    "A random seed is required; the field cannot be blank.");
+                continue;
+            }
+            try
+            {
+                return Long.parseLong(trimmed);
+            }
+            catch (NumberFormatException exception)
+            {
+                view.showError("Enter a signed 64-bit whole number.");
             }
         }
         return null;

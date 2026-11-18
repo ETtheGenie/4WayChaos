@@ -1,3 +1,4 @@
+
 package defaultPackage;
 
 import java.io.PrintStream;
@@ -5,10 +6,9 @@ import java.util.Locale;
 import java.util.Scanner;
 
 /**
- * Text-only presentation layer for the 4WayChaos simulator. Collects raw lines
- * of input and formats immutable model summaries. It does not validate traffic
- * parameters, advance the simulation, or access mutable Lane, Vehicle, or queue
- * objects.
+ * Text-only presentation layer for 4WayChaos V2. Reads raw input and displays
+ * immutable simulation snapshots and reports. The controller validates input;
+ * the model owns traffic behavior and statistics.
  */
 public class TerminalView
 {
@@ -17,8 +17,7 @@ public class TerminalView
     private final PrintStream output;
 
     /**
-     * Creates a terminal view attached to standard input and output. The
-     * application controller should construct this once on startup.
+     * Creates a view connected to standard input and output.
      */
     public TerminalView()
     {
@@ -27,15 +26,14 @@ public class TerminalView
 
 
     /**
-     * Creates a terminal view with supplied input/output resources. This
-     * constructor allows unit testing without using the console.
+     * Creates a view with injectable input and output for testing.
      *
      * @param input
-     *            source of user-entered lines
+     *            source of raw input lines
      * @param output
-     *            destination for displayed text
+     *            destination for display text
      * @throws IllegalArgumentException
-     *             if either argument is null
+     *             if either resource is null
      */
     public TerminalView(Scanner input, PrintStream output)
     {
@@ -50,13 +48,12 @@ public class TerminalView
 
 
     /**
-     * Displays a prompt and returns the next raw line of user input. The
-     * controller is responsible for parsing and validating it. Blank lines and
-     * surrounding whitespace are left unchanged.
+     * Displays a prompt and returns the next unmodified input line. EOF is
+     * represented by null; parsing is the controller's responsibility.
      *
      * @param promptText
-     *            text to display before reading input
-     * @return raw input line, or null if input has ended (EOF)
+     *            text to display before reading
+     * @return raw line including whitespace, or null at EOF
      * @throws IllegalArgumentException
      *             if promptText is null
      */
@@ -73,13 +70,12 @@ public class TerminalView
 
 
     /**
-     * Displays the five supported main-menu commands. Interpretation of menu
-     * selections belongs to the controller.
+     * Displays the five main-menu commands. The controller interprets them.
      */
     public void showMenu()
     {
         output.println();
-        output.println("=== 4WayChaos ===");
+        output.println("=== 4WayChaos V2 ===");
         output.println("1. Configure simulation");
         output.println("2. Run simulation");
         output.println("3. View latest results");
@@ -89,10 +85,10 @@ public class TerminalView
 
 
     /**
-     * Displays an error message supplied by the controller.
+     * Displays a controller-provided error message.
      *
      * @param message
-     *            explanatory error text
+     *            error description
      * @throws IllegalArgumentException
      *             if message is null
      */
@@ -107,11 +103,13 @@ public class TerminalView
 
 
     /**
-     * Displays a read-only snapshot of simulation progress. A snapshot's phase
-     * describes the next interval to be processed.
+     * Displays a read-only V2 progress snapshot. The signal phase is the one
+     * most recently applied (or the initial phase at elapsed time zero).
+     * Incidents are shown at the elapsed-time boundary with their remaining
+     * duration; emergency queue counts are subsets of waiting vehicles.
      *
      * @param snapshot
-     *            current immutable simulation summary
+     *            immutable progress information
      * @throws IllegalArgumentException
      *             if snapshot is null
      */
@@ -125,27 +123,53 @@ public class TerminalView
         output.println(
             "--- Simulation time: " + snapshot.getElapsedSeconds()
                 + " seconds ---");
-        output.println("Next signal phase: " + snapshot.getSignalPhase());
+        output.println("Signal phase: " + snapshot.getSignalPhase());
+        output.println(
+            "Phase elapsed: " + snapshot.getPhaseElapsedSeconds()
+                + " s | Phase switches: " + snapshot.getPhaseSwitchCount());
         output.println(
             "Arrived: " + snapshot.getTotalArrived() + " | Completed: "
                 + snapshot.getTotalCompleted() + " | Waiting: "
                 + snapshot.getWaitingCount() + " | Crossing: "
                 + snapshot.getCrossingCount());
-        output.println("Queue lengths:");
+        output.println(
+            "Emergency vehicles waiting: "
+                + snapshot.getEmergencyWaitingCount());
+        output.println("Approach status:");
+        output.printf(
+            Locale.US,
+            "%-9s %8s %10s %-10s %12s%n",
+            "Approach",
+            "Waiting",
+            "Emergency",
+            "Incident",
+            "Remaining");
+
         for (Direction direction : Direction.values())
         {
-            output.println(
-                "  " + direction + ": " + snapshot.getQueueLength(direction));
+            TrafficEventType type = snapshot.getActiveIncidentType(direction);
+            String remaining = type == TrafficEventType.NONE
+                ? "-"
+                : snapshot.getRemainingIncidentSeconds(direction) + "s";
+            output.printf(
+                Locale.US,
+                "%-9s %8d %10d %-10s %12s%n",
+                direction,
+                snapshot.getQueueLength(direction),
+                snapshot.getEmergencyQueueLength(direction),
+                type,
+                remaining);
         }
     }
 
 
     /**
-     * Displays final vehicle counts, mean waiting time, and queue statistics.
-     * All values have already been calculated by the model.
+     * Displays an immutable completed V2 report: traffic totals, overall and
+     * emergency waiting times, incident counts, signal switches, and queue
+     * statistics. Undefined averages are displayed as N/A.
      *
      * @param results
-     *            immutable report for a completed run
+     *            final simulation results
      * @throws IllegalArgumentException
      *             if results is null
      */
@@ -163,20 +187,33 @@ public class TerminalView
         output.println("Completed: " + results.getTotalCompleted());
         output.println("Waiting: " + results.getWaitingCount());
         output.println("Crossing: " + results.getCrossingCount());
-        Double averageWait = results.getAverageWaitingTimeSeconds();
-        if (averageWait == null)
-        {
-            output.println("Average waiting time: N/A");
-        }
-        else
-        {
-            output.printf(
-                Locale.US,
-                "Average waiting time: %.2f seconds%n",
-                averageWait);
-        }
+        output.println(
+            "Average waiting time: " + formatAverageWithUnit(
+                results.getAverageWaitingTimeSeconds()));
+
         output.println();
+        output.println("Emergency vehicle statistics:");
+        output.println(
+            "Emergency arrived: " + results.getTotalEmergencyArrived());
+        output.println(
+            "Emergency completed: " + results.getTotalEmergencyCompleted());
+        output.println(
+            "Emergency unfinished: " + results.getEmergencyUnfinishedCount());
+        output.println(
+            "Average emergency waiting time: " + formatAverageWithUnit(
+                results.getAverageEmergencyWaitingTimeSeconds()));
+
+        output.println();
+        output.println("Incidents and adaptive signals:");
+        output.println("Accidents: " + results.getTotalAccidents());
+        output.println("Slowdowns: " + results.getTotalSlowdowns());
+        output
+            .println("Signal phase switches: " + results.getPhaseSwitchCount());
+
+        output.println();
+        output.println("Queue statistics (waiting vehicles):");
         output.printf(
+            Locale.US,
             "%-9s %8s %9s %9s%n",
             "Approach",
             "Final",
@@ -196,14 +233,14 @@ public class TerminalView
 
 
     /**
-     * Displays two completed runs side by side for comparison. The view only
-     * formats supplied values; it does not calculate differences or modify
-     * either report.
+     * Displays the last two completed runs side by side. This comparison is
+     * descriptive and does not assume that both runs used identical traffic
+     * configurations. All values come from immutable result objects.
      *
      * @param previous
-     *            earlier completed simulation report
+     *            earlier completed report
      * @param current
-     *            more recent completed simulation report
+     *            more recent completed report
      * @throws IllegalArgumentException
      *             if either report is null
      */
@@ -218,7 +255,13 @@ public class TerminalView
         }
         output.println();
         output.println("=== Simulation Comparison ===");
-        output.printf("%-23s %13s %13s%n", "Metric", "Previous", "Current");
+        output.printf(
+            Locale.US,
+            "%-28s %13s %13s%n",
+            "Metric",
+            "Previous",
+            "Current");
+
         printComparisonRow(
             "Duration (s)",
             Integer.toString(previous.getDurationSeconds()),
@@ -244,19 +287,56 @@ public class TerminalView
             formatAverage(previous.getAverageWaitingTimeSeconds()),
             formatAverage(current.getAverageWaitingTimeSeconds()));
 
+        printComparisonRow(
+            "Emergency arrived",
+            Integer.toString(previous.getTotalEmergencyArrived()),
+            Integer.toString(current.getTotalEmergencyArrived()));
+        printComparisonRow(
+            "Emergency completed",
+            Integer.toString(previous.getTotalEmergencyCompleted()),
+            Integer.toString(current.getTotalEmergencyCompleted()));
+        printComparisonRow(
+            "Emergency unfinished",
+            Integer.toString(previous.getEmergencyUnfinishedCount()),
+            Integer.toString(current.getEmergencyUnfinishedCount()));
+        printComparisonRow(
+            "Emergency mean wait (s)",
+            formatAverage(previous.getAverageEmergencyWaitingTimeSeconds()),
+            formatAverage(current.getAverageEmergencyWaitingTimeSeconds()));
+        printComparisonRow(
+            "Accidents",
+            Integer.toString(previous.getTotalAccidents()),
+            Integer.toString(current.getTotalAccidents()));
+        printComparisonRow(
+            "Slowdowns",
+            Integer.toString(previous.getTotalSlowdowns()),
+            Integer.toString(current.getTotalSlowdowns()));
+        printComparisonRow(
+            "Signal phase switches",
+            Integer.toString(previous.getPhaseSwitchCount()),
+            Integer.toString(current.getPhaseSwitchCount()));
+
+        output.println();
+        output.println("Queue comparison (waiting vehicles):");
+        output.printf(
+            Locale.US,
+            "%-28s %13s %13s%n",
+            "Metric",
+            "Previous",
+            "Current");
         for (Direction direction : Direction.values())
         {
-            String prefix = direction.toString();
+            String name = direction.toString();
             printComparisonRow(
-                prefix + " final queue",
+                name + " final queue",
                 Integer.toString(previous.getFinalQueueLength(direction)),
                 Integer.toString(current.getFinalQueueLength(direction)));
             printComparisonRow(
-                prefix + " avg queue",
+                name + " avg queue",
                 formatNumber(previous.getAverageQueueLength(direction)),
                 formatNumber(current.getAverageQueueLength(direction)));
             printComparisonRow(
-                prefix + " max queue",
+                name + " max queue",
                 Integer.toString(previous.getMaximumQueueLength(direction)),
                 Integer.toString(current.getMaximumQueueLength(direction)));
         }
@@ -264,11 +344,11 @@ public class TerminalView
 
 
     /**
-     * Formats an optional average for a report column.
+     * Formats a nullable mean as a two-decimal number or N/A.
      *
      * @param value
-     *            average value or null if undefined
-     * @return two-decimal text or N/A
+     *            nullable mean
+     * @return formatted number or N/A
      */
     private String formatAverage(Double value)
     {
@@ -277,11 +357,25 @@ public class TerminalView
 
 
     /**
-     * Formats a real-valued statistic with two decimal places.
+     * Formats an average with its unit, except when the value is unavailable.
      *
      * @param value
-     *            statistic to display
-     * @return localized-independent, two-decimal string
+     *            nullable mean waiting time
+     * @return human-readable waiting time or N/A
+     */
+    private String formatAverageWithUnit(Double value)
+    {
+        return value == null ? "N/A" : formatNumber(value) + " seconds";
+    }
+
+
+    /**
+     * Formats a real-valued metric with two digits and a fixed US decimal
+     * point.
+     *
+     * @param value
+     *            finite metric supplied by a validated report
+     * @return two-decimal numeric text
      */
     private String formatNumber(double value)
     {
@@ -290,19 +384,19 @@ public class TerminalView
 
 
     /**
-     * Writes a side-by-side row containing already computed values.
+     * Writes one row of a two-column report comparison.
      *
      * @param label
-     *            metric name
+     *            descriptive metric name
      * @param previous
-     *            value from prior run
+     *            formatted earlier value
      * @param current
-     *            value from current run
+     *            formatted newer value
      */
     private
         void
         printComparisonRow(String label, String previous, String current)
     {
-        output.printf("%-23s %13s %13s%n", label, previous, current);
+        output.printf(Locale.US, "%-28s %13s %13s%n", label, previous, current);
     }
 }
