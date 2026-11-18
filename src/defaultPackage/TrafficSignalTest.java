@@ -1,275 +1,558 @@
+
 package defaultPackage;
 
 import static org.junit.Assert.*;
-import org.junit.Before;
-import org.junit.Test;
-
-import static org.junit.Assert.*;
-
 import org.junit.Test;
 
 /**
- * JUnit 4 tests for TrafficSignal. Verifies fixed-time signal transitions,
- * directional permissions, timing boundaries, input validation, and
- * deterministic operation.
+ * JUnit 4 tests for adaptive traffic-signal state, congestion switching,
+ * emergency priority, minimum/maximum phase times, and invalid input.
  */
 public class TrafficSignalTest
 {
 
     /**
-     * Verifies that an operation rejects invalid arguments with
-     * IllegalArgumentException.
+     * Creates an adaptive signal with chosen timing and queue threshold.
      *
-     * @param operation
-     *            operation expected to fail
+     * @param minimum
+     *            shortest green in seconds
+     * @param maximum
+     *            longest green in seconds
+     * @param threshold
+     *            opposing serviceable queue advantage to switch
+     * @return a new adaptive controller
      */
-    private void assertInvalid(Runnable operation)
+    private TrafficSignal signal(int minimum, int maximum, int threshold)
+    {
+
+        return new TrafficSignal(
+            SimulationOptions.builder().minGreenSeconds(minimum)
+                .maxGreenSeconds(maximum).queueSwitchThreshold(threshold)
+                .build());
+    }
+
+
+    /**
+     * Updates a fresh signal through each second, inclusive.
+     *
+     * @param signal
+     *            fresh signal controller
+     * @param through
+     *            last second to process
+     * @param ns
+     *            number of serviceable NS vehicles
+     * @param ew
+     *            number of serviceable EW vehicles
+     * @param nsEmergency
+     *            NS emergency request
+     * @param ewEmergency
+     *            EW emergency request
+     */
+    private void runThrough(
+        TrafficSignal signal,
+        int through,
+        int ns,
+        int ew,
+        boolean nsEmergency,
+        boolean ewEmergency)
+    {
+
+        for (int second = 0; second <= through; second++)
+        {
+            signal.updateForSecond(second, ns, ew, nsEmergency, ewEmergency);
+        }
+    }
+
+
+    /**
+     * Verifies an invalid input throws IllegalArgumentException.
+     *
+     * @param action
+     *            action expected to fail
+     */
+    private void assertInvalid(Runnable action)
     {
         try
         {
-            operation.run();
-            fail("Expected IllegalArgumentException");
+            action.run();
+            fail("Expected IllegalArgumentException.");
         }
         catch (IllegalArgumentException expected)
         {
-            // Expected exception.
+            // Expected invalid-input rejection.
         }
     }
 
 
     /**
-     * Tests correct construction and retrieval of signal timing parameters.
+     * Rejects a missing immutable configuration.
      */
     @Test
-    public void testConstructorAndGetters()
+    public void testConstructorRejectsNullOptions()
     {
-        TrafficSignal signal = new TrafficSignal(30, 20);
-
-        assertEquals(30, signal.getNsGreenSeconds());
-        assertEquals(20, signal.getEwGreenSeconds());
+        assertInvalid(() -> new TrafficSignal(null));
     }
 
 
     /**
-     * Tests that the intersection initially starts with north-south traffic
-     * receiving green.
+     * Verifies initial phase, counters, and directions without an update.
      */
     @Test
-    public void testInitialPhase()
+    public void testInitialStateAndDirectionPermissions()
     {
-        TrafficSignal signal = new TrafficSignal(30, 20);
+        TrafficSignal signal = signal(10, 60, 3);
 
-        assertEquals(SignalPhase.NS_GREEN, signal.phaseAt(0));
+        assertEquals(SignalPhase.NS_GREEN, signal.getCurrentPhase());
+        assertEquals(0, signal.getPhaseStartSecond());
+        assertEquals(0, signal.getPhaseSwitchCount());
+        assertEquals(-1, signal.getLastUpdatedSecond());
+
+        assertTrue(signal.allows(Direction.NORTH));
+        assertTrue(signal.allows(Direction.SOUTH));
+        assertFalse(signal.allows(Direction.EAST));
+        assertFalse(signal.allows(Direction.WEST));
     }
 
 
     /**
-     * Tests correct phase changes at exact boundaries of a 50-second signal
-     * cycle.
+     * Confirms a valid update at time zero does not change initial green.
      */
     @Test
-    public void testPhaseTransitions()
+    public void testFirstUpdateAtZero()
     {
-        TrafficSignal signal = new TrafficSignal(30, 20);
+        TrafficSignal signal = signal(10, 60, 3);
 
-        assertEquals(SignalPhase.NS_GREEN, signal.phaseAt(0));
+        signal.updateForSecond(0, 0, 100, false, true);
 
-        assertEquals(SignalPhase.NS_GREEN, signal.phaseAt(29));
-
-        assertEquals(SignalPhase.EW_GREEN, signal.phaseAt(30));
-
-        assertEquals(SignalPhase.EW_GREEN, signal.phaseAt(49));
-
-        assertEquals(SignalPhase.NS_GREEN, signal.phaseAt(50));
+        assertEquals(SignalPhase.NS_GREEN, signal.getCurrentPhase());
+        assertEquals(0, signal.getPhaseStartSecond());
+        assertEquals(0, signal.getLastUpdatedSecond());
+        assertEquals(0, signal.getPhaseSwitchCount());
     }
 
 
     /**
-     * Tests that phase timing repeats correctly over multiple full cycles.
+     * Confirms congestion cannot cause a switch before minimum green.
      */
     @Test
-    public void testRepeatedCycles()
+    public void testMinimumGreenProtectsAgainstCongestion()
     {
-        TrafficSignal signal = new TrafficSignal(30, 20);
+        TrafficSignal signal = signal(10, 60, 3);
 
-        assertEquals(SignalPhase.NS_GREEN, signal.phaseAt(100));
+        runThrough(signal, 9, 0, 100, false, false);
 
-        assertEquals(SignalPhase.NS_GREEN, signal.phaseAt(129));
-
-        assertEquals(SignalPhase.EW_GREEN, signal.phaseAt(130));
-
-        assertEquals(SignalPhase.EW_GREEN, signal.phaseAt(149));
-
-        assertEquals(SignalPhase.NS_GREEN, signal.phaseAt(150));
+        assertEquals(SignalPhase.NS_GREEN, signal.getCurrentPhase());
+        assertEquals(0, signal.getPhaseSwitchCount());
     }
 
 
     /**
-     * Tests that north and south are permitted during NS_GREEN while east and
-     * west are not.
+     * Confirms a queued emergency cannot break minimum green.
      */
     @Test
-    public void testNorthSouthPermissions()
+    public void testMinimumGreenProtectsAgainstEmergency()
     {
-        TrafficSignal signal = new TrafficSignal(30, 20);
+        TrafficSignal signal = signal(10, 60, 3);
 
-        assertTrue(signal.allows(Direction.NORTH, 10));
-        assertTrue(signal.allows(Direction.SOUTH, 10));
+        runThrough(signal, 9, 50, 1, false, true);
 
-        assertFalse(signal.allows(Direction.EAST, 10));
-        assertFalse(signal.allows(Direction.WEST, 10));
+        assertEquals(SignalPhase.NS_GREEN, signal.getCurrentPhase());
+        assertEquals(0, signal.getPhaseSwitchCount());
     }
 
 
     /**
-     * Tests that east and west are permitted during EW_GREEN while north and
-     * south are not.
+     * Tests switching exactly at the minimum green boundary with demand.
      */
     @Test
-    public void testEastWestPermissions()
+    public void testCongestionSwitchAtMinimumBoundary()
     {
-        TrafficSignal signal = new TrafficSignal(30, 20);
+        TrafficSignal signal = signal(10, 60, 3);
 
-        assertTrue(signal.allows(Direction.EAST, 35));
-        assertTrue(signal.allows(Direction.WEST, 35));
+        runThrough(signal, 10, 1, 4, false, false);
 
-        assertFalse(signal.allows(Direction.NORTH, 35));
-        assertFalse(signal.allows(Direction.SOUTH, 35));
+        assertEquals(SignalPhase.EW_GREEN, signal.getCurrentPhase());
+        assertEquals(10, signal.getPhaseStartSecond());
+        assertEquals(1, signal.getPhaseSwitchCount());
+        assertFalse(signal.allows(Direction.NORTH));
+        assertTrue(signal.allows(Direction.EAST));
     }
 
 
     /**
-     * Tests that directional permissions change at the exact signal transition
-     * times.
+     * Tests that a queue advantage below the threshold does not switch.
      */
     @Test
-    public void testPermissionTransitions()
+    public void testQueueThresholdBelowBoundary()
     {
-        TrafficSignal signal = new TrafficSignal(30, 20);
+        TrafficSignal signal = signal(10, 60, 3);
 
-        assertTrue(signal.allows(Direction.NORTH, 29));
-        assertFalse(signal.allows(Direction.EAST, 29));
+        runThrough(signal, 11, 1, 3, false, false);
 
-        assertFalse(signal.allows(Direction.NORTH, 30));
-        assertTrue(signal.allows(Direction.EAST, 30));
-
-        assertFalse(signal.allows(Direction.EAST, 50));
-        assertTrue(signal.allows(Direction.NORTH, 50));
+        assertEquals(SignalPhase.NS_GREEN, signal.getCurrentPhase());
+        assertEquals(0, signal.getPhaseSwitchCount());
     }
 
 
     /**
-     * Tests valid minimum and maximum signal durations defined by
-     * SimulationConfig.
+     * Tests that the queue difference exactly meeting threshold switches.
      */
     @Test
-    public void testValidDurationBoundaries()
+    public void testQueueThresholdExactBoundary()
     {
-        TrafficSignal minimum = new TrafficSignal(5, 5);
+        TrafficSignal signal = signal(10, 60, 3);
 
-        assertEquals(SignalPhase.NS_GREEN, minimum.phaseAt(4));
+        runThrough(signal, 9, 1, 3, false, false);
+        signal.updateForSecond(10, 1, 4, false, false);
 
-        assertEquals(SignalPhase.EW_GREEN, minimum.phaseAt(5));
-
-        assertEquals(SignalPhase.NS_GREEN, minimum.phaseAt(10));
-
-        TrafficSignal maximum = new TrafficSignal(120, 120);
-
-        assertEquals(SignalPhase.NS_GREEN, maximum.phaseAt(119));
-
-        assertEquals(SignalPhase.EW_GREEN, maximum.phaseAt(120));
-
-        assertEquals(SignalPhase.NS_GREEN, maximum.phaseAt(240));
+        assertEquals(SignalPhase.EW_GREEN, signal.getCurrentPhase());
     }
 
 
     /**
-     * Tests rejection of signal durations below their permitted minimum or
-     * above their maximum.
+     * Tests idle-green yielding even if the opposing queue is below threshold.
      */
     @Test
-    public void testInvalidDurations()
+    public void testIdleCurrentPhaseYieldsToSingleOpposingVehicle()
     {
-        assertInvalid(() -> new TrafficSignal(0, 30));
-        assertInvalid(() -> new TrafficSignal(4, 30));
-        assertInvalid(() -> new TrafficSignal(-1, 30));
-        assertInvalid(() -> new TrafficSignal(121, 30));
+        TrafficSignal signal = signal(10, 60, 50);
 
-        assertInvalid(() -> new TrafficSignal(30, 0));
-        assertInvalid(() -> new TrafficSignal(30, 4));
-        assertInvalid(() -> new TrafficSignal(30, -1));
-        assertInvalid(() -> new TrafficSignal(30, 121));
+        runThrough(signal, 10, 0, 1, false, false);
+
+        assertEquals(SignalPhase.EW_GREEN, signal.getCurrentPhase());
     }
 
 
     /**
-     * Tests that negative simulation times are rejected by both phase and
-     * permission queries.
+     * Tests equal zero demand is maintained until maximum green.
      */
     @Test
-    public void testNegativeSimulationTime()
+    public void testNoDemandHoldsPhaseUntilMaximum()
     {
-        TrafficSignal signal = new TrafficSignal(30, 20);
+        TrafficSignal signal = signal(10, 20, 3);
 
-        assertInvalid(() -> signal.phaseAt(-1));
+        runThrough(signal, 19, 0, 0, false, false);
 
-        assertInvalid(() -> signal.allows(Direction.NORTH, -1));
+        assertEquals(SignalPhase.NS_GREEN, signal.getCurrentPhase());
+        assertEquals(0, signal.getPhaseSwitchCount());
+
+        signal.updateForSecond(20, 0, 0, false, false);
+
+        assertEquals(SignalPhase.EW_GREEN, signal.getCurrentPhase());
     }
 
 
     /**
-     * Tests that a null approach is rejected rather than being interpreted as a
-     * red signal.
+     * Tests serviceable current demand greater than opposing demand.
      */
     @Test
-    public void testNullDirection()
+    public void testCurrentDemandWinsBelowMaximum()
     {
-        TrafficSignal signal = new TrafficSignal(30, 20);
+        TrafficSignal signal = signal(10, 60, 3);
 
-        assertInvalid(() -> signal.allows(null, 10));
+        runThrough(signal, 20, 20, 1, false, false);
+
+        assertEquals(SignalPhase.NS_GREEN, signal.getCurrentPhase());
     }
 
 
     /**
-     * Tests that repeated queries at the same time return identical results
-     * without altering state.
+     * Tests an opposing emergency request can override large queue imbalance.
      */
     @Test
-    public void testDeterministicBehavior()
+    public void testOpposingEmergencySwitchesAtMinimum()
     {
-        TrafficSignal signal = new TrafficSignal(30, 20);
+        TrafficSignal signal = signal(10, 60, 3);
 
-        SignalPhase first = signal.phaseAt(75);
+        runThrough(signal, 10, 100, 1, false, true);
 
-        for (int i = 0; i < 100; i++)
+        assertEquals(SignalPhase.EW_GREEN, signal.getCurrentPhase());
+        assertEquals(10, signal.getPhaseStartSecond());
+        assertEquals(1, signal.getPhaseSwitchCount());
+    }
+
+
+    /**
+     * Tests an emergency on the active green prevents congestion-based
+     * switching.
+     */
+    @Test
+    public void testCurrentEmergencyKeepsGreenAgainstOpposingCongestion()
+    {
+        TrafficSignal signal = signal(10, 20, 3);
+
+        runThrough(signal, 19, 1, 100, true, false);
+
+        assertEquals(SignalPhase.NS_GREEN, signal.getCurrentPhase());
+
+        signal.updateForSecond(20, 1, 100, true, false);
+
+        assertEquals(SignalPhase.EW_GREEN, signal.getCurrentPhase());
+    }
+
+
+    /**
+     * Tests simultaneous emergency requests defer to maximum-green fairness.
+     */
+    @Test
+    public void testConflictingEmergencyRequestsHoldUntilMaximum()
+    {
+        TrafficSignal signal = signal(10, 20, 3);
+
+        runThrough(signal, 19, 1, 100, true, true);
+
+        assertEquals(SignalPhase.NS_GREEN, signal.getCurrentPhase());
+
+        signal.updateForSecond(20, 1, 100, true, true);
+
+        assertEquals(SignalPhase.EW_GREEN, signal.getCurrentPhase());
+    }
+
+
+    /**
+     * Tests forced switching at maximum even without opposing demand.
+     */
+    @Test
+    public void testMaximumGreenForcesSwitchWithoutOpposingDemand()
+    {
+        TrafficSignal signal = signal(5, 15, 3);
+
+        runThrough(signal, 14, 10, 0, false, false);
+
+        assertEquals(SignalPhase.NS_GREEN, signal.getCurrentPhase());
+
+        signal.updateForSecond(15, 10, 0, false, false);
+
+        assertEquals(SignalPhase.EW_GREEN, signal.getCurrentPhase());
+        assertEquals(15, signal.getPhaseStartSecond());
+    }
+
+
+    /**
+     * Tests minimum-green time is reestablished after every switch.
+     */
+    @Test
+    public void testMinimumResetsAfterSwitch()
+    {
+        TrafficSignal signal = signal(10, 60, 3);
+
+        runThrough(signal, 10, 0, 10, false, false);
+        assertEquals(SignalPhase.EW_GREEN, signal.getCurrentPhase());
+
+        for (int second = 11; second < 20; second++)
         {
-            assertEquals(first, signal.phaseAt(75));
+            signal.updateForSecond(second, 10, 0, false, false);
+            assertEquals(SignalPhase.EW_GREEN, signal.getCurrentPhase());
         }
 
-        assertEquals(SignalPhase.NS_GREEN, signal.phaseAt(0));
+        signal.updateForSecond(20, 10, 0, false, false);
 
-        assertEquals(SignalPhase.NS_GREEN, signal.phaseAt(75));
-
-        assertEquals(SignalPhase.EW_GREEN, signal.phaseAt(85));
+        assertEquals(SignalPhase.NS_GREEN, signal.getCurrentPhase());
+        assertEquals(20, signal.getPhaseStartSecond());
+        assertEquals(2, signal.getPhaseSwitchCount());
     }
 
 
     /**
-     * Tests signal phase calculation near the largest representable integer
-     * simulation time. Confirms that large elapsed times do not cause overflow
-     * or incorrect cycle calculations.
+     * Tests that emergency priority also works when east-west is active.
      */
     @Test
-    public void testLargeSimulationTime()
+    public void testNorthSouthEmergencyPriorityWhenEastWestActive()
     {
-        TrafficSignal signal = new TrafficSignal(30, 20);
+        TrafficSignal signal = signal(10, 60, 3);
 
-        int time = Integer.MAX_VALUE;
-        int cyclePosition = time % 50;
+        runThrough(signal, 10, 0, 5, false, false);
+        assertEquals(SignalPhase.EW_GREEN, signal.getCurrentPhase());
 
-        SignalPhase expected =
-            cyclePosition < 30 ? SignalPhase.NS_GREEN : SignalPhase.EW_GREEN;
+        for (int second = 11; second < 20; second++)
+        {
+            signal.updateForSecond(second, 1, 100, true, false);
+        }
 
-        assertEquals(expected, signal.phaseAt(time));
+        assertEquals(SignalPhase.EW_GREEN, signal.getCurrentPhase());
+
+        signal.updateForSecond(20, 1, 100, true, false);
+
+        assertEquals(SignalPhase.NS_GREEN, signal.getCurrentPhase());
+    }
+
+
+    /**
+     * Tests that a blocked approach contributing zero serviceable demand cannot
+     * induce a switch despite having a raw queue elsewhere in the model.
+     */
+    @Test
+    public void testNoPriorityFromBlockedApproach()
+    {
+        TrafficSignal signal = signal(10, 60, 3);
+
+        // A blocked EW approach contributes zero serviceable demand.
+        runThrough(signal, 15, 3, 0, false, false);
+
+        assertEquals(SignalPhase.NS_GREEN, signal.getCurrentPhase());
+    }
+
+
+    /**
+     * Tests a boundary configuration where minimum and maximum green are equal.
+     */
+    @Test
+    public void testEqualMinimumMaximumSwitchesAtExactInterval()
+    {
+        TrafficSignal signal = signal(5, 5, 1);
+
+        runThrough(signal, 4, 0, 0, false, false);
+        assertEquals(SignalPhase.NS_GREEN, signal.getCurrentPhase());
+
+        signal.updateForSecond(5, 0, 0, false, false);
+        assertEquals(SignalPhase.EW_GREEN, signal.getCurrentPhase());
+
+        for (int second = 6; second <= 10; second++)
+        {
+            signal.updateForSecond(second, 0, 0, false, false);
+        }
+
+        assertEquals(SignalPhase.NS_GREEN, signal.getCurrentPhase());
+        assertEquals(2, signal.getPhaseSwitchCount());
+    }
+
+
+    /**
+     * Tests negative, skipped, and repeated update times are rejected.
+     */
+    @Test
+    public void testInvalidUpdateTimeOrder()
+    {
+        TrafficSignal signal = signal(10, 60, 3);
+
+        assertInvalid(() -> signal.updateForSecond(-1, 1, 1, false, false));
+        assertInvalid(() -> signal.updateForSecond(1, 1, 1, false, false));
+
+        assertEquals(-1, signal.getLastUpdatedSecond());
+
+        signal.updateForSecond(0, 1, 1, false, false);
+
+        assertInvalid(() -> signal.updateForSecond(0, 1, 1, false, false));
+        assertInvalid(() -> signal.updateForSecond(2, 1, 1, false, false));
+
+        assertEquals(0, signal.getLastUpdatedSecond());
+
+        signal.updateForSecond(1, 1, 1, false, false);
+        assertEquals(1, signal.getLastUpdatedSecond());
+    }
+
+
+    /**
+     * Tests that invalid serviceable queues do not advance signal time.
+     */
+    @Test
+    public void testNegativeQueueCountsRejectedWithoutMutation()
+    {
+        TrafficSignal signal = signal(10, 60, 3);
+
+        assertInvalid(() -> signal.updateForSecond(0, -1, 1, false, false));
+        assertInvalid(() -> signal.updateForSecond(0, 1, -1, false, false));
+
+        assertEquals(-1, signal.getLastUpdatedSecond());
+        assertEquals(0, signal.getPhaseSwitchCount());
+
+        signal.updateForSecond(0, 0, 0, false, false);
+
+        assertEquals(0, signal.getLastUpdatedSecond());
+    }
+
+
+    /**
+     * Tests that emergency requests without serviceable waiting cars are
+     * rejected.
+     */
+    @Test
+    public void testEmergencyWithoutServiceableQueueRejected()
+    {
+        TrafficSignal signal = signal(10, 60, 3);
+
+        assertInvalid(() -> signal.updateForSecond(0, 0, 1, true, false));
+        assertInvalid(() -> signal.updateForSecond(0, 1, 0, false, true));
+
+        assertEquals(-1, signal.getLastUpdatedSecond());
+
+        signal.updateForSecond(0, 1, 1, true, true);
+
+        assertEquals(0, signal.getLastUpdatedSecond());
+    }
+
+
+    /**
+     * Tests null directions cannot be passed to signal permission lookup.
+     */
+    @Test
+    public void testAllowsRejectsNullDirection()
+    {
+        TrafficSignal signal = signal(10, 60, 3);
+
+        assertInvalid(() -> signal.allows(null));
+    }
+
+
+    /**
+     * Tests phase-change counters and timestamps across repeated maximum-green
+     * switches.
+     */
+    @Test
+    public void testRepeatedMaximumSwitchesAndCounters()
+    {
+        TrafficSignal signal = signal(10, 20, 3);
+
+        runThrough(signal, 60, 0, 0, false, false);
+
+        assertEquals(SignalPhase.EW_GREEN, signal.getCurrentPhase());
+        assertEquals(60, signal.getPhaseStartSecond());
+        assertEquals(3, signal.getPhaseSwitchCount());
+        assertEquals(60, signal.getLastUpdatedSecond());
+
+        assertFalse(signal.allows(Direction.NORTH));
+        assertFalse(signal.allows(Direction.SOUTH));
+        assertTrue(signal.allows(Direction.EAST));
+        assertTrue(signal.allows(Direction.WEST));
+    }
+
+
+    /**
+     * Stress-tests timing invariants and sequential updates for 7200 seconds.
+     */
+    @Test
+    public void testLongRunRespectsMinAndMaxGreen()
+    {
+        TrafficSignal signal = signal(5, 37, 3);
+
+        int lastStart = 0;
+        int changes = 0;
+
+        for (int t = 0; t < 7200; t++)
+        {
+            int ns = t % 79 < 37 ? 100 : 1;
+            int ew = t % 79 < 37 ? 1 : 100;
+
+            signal.updateForSecond(t, ns, ew, false, false);
+
+            if (signal.getPhaseStartSecond() != lastStart)
+            {
+                int interval = signal.getPhaseStartSecond() - lastStart;
+
+                assertTrue(
+                    "Phase shorter than minimum at t=" + t,
+                    interval >= 5);
+                assertTrue(
+                    "Phase longer than maximum at t=" + t,
+                    interval <= 37);
+
+                changes++;
+                lastStart = signal.getPhaseStartSecond();
+            }
+        }
+
+        assertTrue(changes > 0);
+        assertEquals(changes, signal.getPhaseSwitchCount());
+        assertTrue(7199 - lastStart < 37);
     }
 }

@@ -1,111 +1,193 @@
+
 package defaultPackage;
 
 /**
- * Models the fixed-time traffic signals at a four-way intersection. The
- * intersection alternates between north-south and east-west green phases. The
- * active phase is calculated from simulation time rather than stored as mutable
- * state. This class determines whether a traffic approach is permitted to
- * release vehicles, but does not modify any vehicle queues.
+ * Stateful adaptive signal controller for the four-way intersection. Exactly
+ * one direction pair is green at a time. Decisions are based on serviceable
+ * waiting queues and eligible emergency requests supplied by SimulationModel.
+ * The controller never accesses lanes, incidents, or vehicles. A phase is
+ * guaranteed to last at least the configured minimum and switches upon reaching
+ * the maximum, even when the opposing queue is empty. Updates must be applied
+ * exactly once per second, beginning at second zero.
  */
-public class TrafficSignal
+public final class TrafficSignal
 {
 
-    private final int nsGreenSeconds;
-    private final int ewGreenSeconds;
+    private final int minGreenSeconds;
+    private final int maxGreenSeconds;
+    private final int queueSwitchThreshold;
+
+    private SignalPhase currentPhase;
+    private int phaseStartSecond;
+    private int phaseSwitchCount;
+    private int lastUpdatedSecond;
 
     /**
-     * Constructs traffic signals with fixed green durations for each direction
-     * pair. The initial phase at time zero is NS_GREEN.
+     * Creates an adaptive controller that starts with north-south green.
      *
-     * @param nsGreenSeconds
-     *            north-south green duration
-     * @param ewGreenSeconds
-     *            east-west green duration
+     * @param options
+     *            validated V2 signal options
      * @throws IllegalArgumentException
-     *             if either duration is outside the allowed limits
+     *             if options is null
      */
-    public TrafficSignal(int nsGreenSeconds, int ewGreenSeconds)
+    public TrafficSignal(SimulationOptions options)
     {
-
-        if (nsGreenSeconds < SimulationConfig.MIN_GREEN_SECONDS
-            || nsGreenSeconds > SimulationConfig.MAX_GREEN_SECONDS)
+        if (options == null)
         {
             throw new IllegalArgumentException(
-                "North-south green duration must be " + "between "
-                    + SimulationConfig.MIN_GREEN_SECONDS + " and "
-                    + SimulationConfig.MAX_GREEN_SECONDS + " seconds.");
+                "Simulation options cannot be null.");
         }
 
-        if (ewGreenSeconds < SimulationConfig.MIN_GREEN_SECONDS
-            || ewGreenSeconds > SimulationConfig.MAX_GREEN_SECONDS)
-        {
-            throw new IllegalArgumentException(
-                "East-west green duration must be " + "between "
-                    + SimulationConfig.MIN_GREEN_SECONDS + " and "
-                    + SimulationConfig.MAX_GREEN_SECONDS + " seconds.");
-        }
+        minGreenSeconds = options.getMinGreenSeconds();
+        maxGreenSeconds = options.getMaxGreenSeconds();
+        queueSwitchThreshold = options.getQueueSwitchThreshold();
 
-        this.nsGreenSeconds = nsGreenSeconds;
-        this.ewGreenSeconds = ewGreenSeconds;
+        currentPhase = SignalPhase.NS_GREEN;
+        phaseStartSecond = 0;
+        phaseSwitchCount = 0;
+        lastUpdatedSecond = -1;
     }
 
 
     /**
-     * Calculates the active traffic signal phase at a given simulation time.
-     * The intersection begins with NS_GREEN, then alternates with EW_GREEN
-     * according to the configured durations.
+     * Selects the signal phase to be used during the specified second. The
+     * arguments describe queues that can actually discharge: a lane blocked by
+     * an accident must contribute zero serviceable vehicles and must not
+     * request emergency priority. Each queue is the combined count for one
+     * opposing direction pair (NORTH+SOUTH or EAST+WEST). Switching priority
+     * is: maximum green, minimum green, unopposed emergency request, then
+     * opposing queue demand. Competing emergency requests keep the present
+     * phase until maximum green. If there are no emergency requests, an idle
+     * current phase yields to positive opposing demand; otherwise the opposing
+     * queue must exceed the current queue by at least the configured threshold.
+     * At the maximum, switching is forced.
      *
-     * @param elapsedSecond
-     *            zero-based simulation time
-     * @return active signal phase at the given time
+     * @param currentSecond
+     *            next consecutive zero-based simulation second
+     * @param nsServiceableQueue
+     *            serviceable NORTH+SOUTH waiting vehicles
+     * @param ewServiceableQueue
+     *            serviceable EAST+WEST waiting vehicles
+     * @param nsEmergencyPriority
+     *            whether NS has a serviceable waiting emergency
+     * @param ewEmergencyPriority
+     *            whether EW has a serviceable waiting emergency
      * @throws IllegalArgumentException
-     *             if time is negative
+     *             for invalid times, queue counts, or priority without
+     *             serviceable vehicles
      */
-    public SignalPhase phaseAt(int elapsedSecond)
+    public void updateForSecond(
+        int currentSecond,
+        int nsServiceableQueue,
+        int ewServiceableQueue,
+        boolean nsEmergencyPriority,
+        boolean ewEmergencyPriority)
     {
 
-        if (elapsedSecond < 0)
+        // Validate all inputs before changing state.
+        if (currentSecond < 0
+            || (long)currentSecond != (long)lastUpdatedSecond + 1L)
         {
             throw new IllegalArgumentException(
-                "Simulation time cannot be negative.");
+                "Signal updates must start at zero and be consecutive.");
         }
 
-        int cycleLength = nsGreenSeconds + ewGreenSeconds;
-
-        int cyclePosition = elapsedSecond % cycleLength;
-
-        if (cyclePosition < nsGreenSeconds)
+        if (nsServiceableQueue < 0 || ewServiceableQueue < 0)
         {
-            return SignalPhase.NS_GREEN;
+            throw new IllegalArgumentException(
+                "Serviceable queue counts cannot be negative.");
         }
 
-        return SignalPhase.EW_GREEN;
+        if ((nsEmergencyPriority && nsServiceableQueue == 0)
+            || (ewEmergencyPriority && ewServiceableQueue == 0))
+        {
+            throw new IllegalArgumentException(
+                "Emergency priority requires a serviceable waiting vehicle.");
+        }
+
+        int elapsedInPhase = currentSecond - phaseStartSecond;
+        boolean switchPhase = false;
+
+        if (elapsedInPhase >= maxGreenSeconds)
+        {
+            // Enforce maximum green, including during emergency requests.
+            switchPhase = true;
+        }
+        else if (elapsedInPhase >= minGreenSeconds)
+        {
+
+            boolean currentIsNS = currentPhase == SignalPhase.NS_GREEN;
+
+            boolean currentEmergency =
+                currentIsNS ? nsEmergencyPriority : ewEmergencyPriority;
+
+            boolean opposingEmergency =
+                currentIsNS ? ewEmergencyPriority : nsEmergencyPriority;
+
+            int currentQueue =
+                currentIsNS ? nsServiceableQueue : ewServiceableQueue;
+
+            int opposingQueue =
+                currentIsNS ? ewServiceableQueue : nsServiceableQueue;
+
+            if (opposingEmergency && !currentEmergency)
+            {
+                switchPhase = true;
+            }
+            else if (!currentEmergency && !opposingEmergency)
+            {
+                switchPhase = (currentQueue == 0 && opposingQueue > 0)
+                    || (long)opposingQueue
+                        - currentQueue >= queueSwitchThreshold;
+            }
+
+            // If an emergency exists in the current directions, or
+            // both directions request emergency priority, retain the
+            // current phase until the maximum duration is reached.
+        }
+
+        if (switchPhase)
+        {
+            currentPhase = currentPhase == SignalPhase.NS_GREEN
+                ? SignalPhase.EW_GREEN
+                : SignalPhase.NS_GREEN;
+
+            phaseStartSecond = currentSecond;
+            phaseSwitchCount++;
+        }
+
+        lastUpdatedSecond = currentSecond;
     }
 
 
     /**
-     * Determines whether an incoming traffic approach has a green light at the
-     * given time. NORTH and SOUTH are permitted during NS_GREEN. EAST and WEST
-     * are permitted during EW_GREEN. A green signal does not guarantee
-     * departure; lane queue and headway rules also apply.
+     * Returns the phase selected for the most recently updated second. Before
+     * the first update the initial phase is north-south green.
+     *
+     * @return NS_GREEN or EW_GREEN
+     */
+    public SignalPhase getCurrentPhase()
+    {
+        return currentPhase;
+    }
+
+
+    /**
+     * Indicates whether an approach is permitted by the current signal. Actual
+     * release still depends on the lane and active incident state.
      *
      * @param approach
-     *            incoming vehicle direction
-     * @param elapsedSecond
-     *            zero-based simulation time
-     * @return true if the approach has green, otherwise false
+     *            incoming approach to check
+     * @return true if this direction has the current green signal
      * @throws IllegalArgumentException
-     *             if direction is null or simulation time is negative
+     *             if approach is null
      */
-    public boolean allows(Direction approach, int elapsedSecond)
+    public boolean allows(Direction approach)
     {
-
         if (approach == null)
         {
             throw new IllegalArgumentException("Approach cannot be null.");
         }
-
-        SignalPhase currentPhase = phaseAt(elapsedSecond);
 
         switch (approach)
         {
@@ -118,30 +200,40 @@ public class TrafficSignal
                 return currentPhase == SignalPhase.EW_GREEN;
 
             default:
-                throw new IllegalArgumentException(
-                    "Unsupported traffic direction.");
+                throw new IllegalArgumentException("Unsupported direction.");
         }
     }
 
 
     /**
-     * Returns the configured north-south green duration.
+     * Returns when the currently active phase began.
      *
-     * @return north-south green duration in seconds
+     * @return inclusive simulated starting second
      */
-    public int getNsGreenSeconds()
+    public int getPhaseStartSecond()
     {
-        return nsGreenSeconds;
+        return phaseStartSecond;
     }
 
 
     /**
-     * Returns the configured east-west green duration.
+     * Returns the number of switches made since initialization.
      *
-     * @return east-west green duration in seconds
+     * @return nonnegative count of phase changes
      */
-    public int getEwGreenSeconds()
+    public int getPhaseSwitchCount()
     {
-        return ewGreenSeconds;
+        return phaseSwitchCount;
+    }
+
+
+    /**
+     * Returns the most recently updated simulation second.
+     *
+     * @return last updated second, or -1 before the first update
+     */
+    public int getLastUpdatedSecond()
+    {
+        return lastUpdatedSecond;
     }
 }
